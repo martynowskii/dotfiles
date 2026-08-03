@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   dotfiles = "${config.home.homeDirectory}/Documents/dotfiles";
@@ -9,6 +9,10 @@ let
   }) { system = pkgs.stdenv.hostPlatform.system; };
 in
 {
+  imports = [
+    ./zsh.nix
+  ];
+
   home.username = "arthr";
   home.homeDirectory = "/home/arthr";
   home.stateVersion = "26.05";
@@ -17,7 +21,13 @@ in
 
   home.sessionVariables = {
     EDITOR = "nvim";
+    VISUAL = "nvim";
   };
+
+  home.sessionPath = [
+    "$HOME/.local/bin"
+    "$HOME/bin"
+  ];
 
   programs.chromium = {
     enable = true;
@@ -32,9 +42,9 @@ in
     escapeTime = 10;
   };
 
-  programs.zsh = {
+  programs.fzf = {
     enable = true;
-    dotDir = "${config.home.homeDirectory}/.config/zsh";
+    enableZshIntegration = true;
   };
 
   xdg.configFile."nvim".source =
