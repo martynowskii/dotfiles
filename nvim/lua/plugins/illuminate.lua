@@ -1,6 +1,6 @@
 return {
     "RRethy/vim-illuminate",
-    tag = "v0.3",
+    -- tag = "v0.3",
     event = "VeryLazy",
     config = function()
         require("illuminate").configure({

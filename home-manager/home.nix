@@ -58,10 +58,23 @@ in
 
   home.packages = with pkgs; [
     bat
+    gcc
+    gnumake
     telegram-desktop
     tree
+    python314
     vim-full
+    unzip
+    wget
+
+    # For neovim, get packages w/o mason
     nvimPkgs.neovim
     lua-language-server
+    nodejs_22
+    tree-sitter
+    nil
+    pyright
+    yaml-language-server
+    nixpkgs-fmt
   ];
 }
