@@ -2,15 +2,13 @@
 
 let
   dotfiles = "${config.home.homeDirectory}/Documents/dotfiles";
-
-  nvimPkgs = import (builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/832efc09b4caf6b4569fbf9dc01bec3082a00611.tar.gz";
-    sha256 = "1sxhlp1khk9ifh24lcg5qland4pg056l5jhyfw8xq3qmpavf390x";
-  }) { system = pkgs.stdenv.hostPlatform.system; };
 in
 {
   imports = [
-    ./zsh.nix
+    ./modules/foot.nix
+    ./modules/niri.nix
+    ./modules/nvim.nix
+    ./modules/zsh.nix
   ];
 
   home.username = "arthr";
@@ -22,6 +20,7 @@ in
   home.sessionVariables = {
     EDITOR = "nvim";
     VISUAL = "nvim";
+    PAGER = "less -R";
   };
 
   home.sessionPath = [
@@ -47,12 +46,6 @@ in
     enableZshIntegration = true;
   };
 
-  xdg.configFile."nvim".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/nvim";
-
-  xdg.configFile."niri".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/niri";
-
   home.file.".vim/vimrc".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/vim/vimrc.vim";
 
@@ -60,21 +53,10 @@ in
     bat
     gcc
     gnumake
+    python314
     telegram-desktop
     tree
-    python314
-    vim-full
     unzip
-    wget
-
-    # For neovim, get packages w/o mason
-    nvimPkgs.neovim
-    lua-language-server
-    nodejs_22
-    tree-sitter
-    nil
-    pyright
-    yaml-language-server
-    nixpkgs-fmt
+    vim-full
   ];
 }

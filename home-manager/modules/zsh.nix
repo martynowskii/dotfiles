@@ -1,7 +1,6 @@
 { config, lib, pkgs, ... }:
 
-
-let 
+let
   dotfiles = "${config.home.homeDirectory}/Documents/dotfiles";
 in
 {
@@ -13,6 +12,18 @@ in
     enableCompletion = true;
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
+
+    oh-my-zsh = {
+      enable = true;
+      theme = "";                    # тему рисует p10k
+      plugins = [
+        "git"
+        # "sudo"                       # ESC ESC — префикс sudo к последней команде
+        # "extract"                    # x archive.tar.gz — любой формат
+        "colored-man-pages"
+        "command-not-found"
+      ];
+    };
 
     history = {
       path = "${config.xdg.dataHome}/zsh/history";
@@ -27,11 +38,6 @@ in
 
     plugins = [
       {
-        name = "git";
-        src = pkgs.oh-my-zsh;
-        file = "share/oh-my-zsh/plugins/git/git.plugin.zsh";
-      }
-      {
         name = "powerlevel10k";
         src = pkgs.zsh-powerlevel10k;
         file = "share/zsh-powerlevel10k/powerlevel10k.zsh-theme";
@@ -45,9 +51,7 @@ in
         fi
       '')
       ''
-        setopt AUTO_PUSHD
-        setopt PUSHD_IGNORE_DUPS
-        setopt PUSHD_SILENT
+        HISTFILE="${config.xdg.dataHome}/zsh/history"
 
         source ${dotfiles}/zsh/p10k.zsh
         source ${dotfiles}/zsh/yandex.zsh
