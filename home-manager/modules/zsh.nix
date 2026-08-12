@@ -33,7 +33,7 @@ in
 
     shellAliases = {
       hms = "home-manager switch -b backup";
-      nrs = "nixos-rebuild switch";
+      nrs = "sudo nixos-rebuild switch";
     };
 
     plugins = [

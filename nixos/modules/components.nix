@@ -10,7 +10,7 @@
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
   environment.systemPackages = with pkgs; [
-    alacritty
+    # alacritty
     chromium
     git
     jq
@@ -19,6 +19,7 @@
     swaylock
     wget
     wl-clipboard
+    wtype
 
     # Needed for appicons in noctalia
     tela-icon-theme
@@ -36,7 +37,7 @@
   #   enable = true;
   #   enableSSHSupport = true;
   # };
-  
+
   programs = {
     # Чтобы zsh был доступен как login shell
     zsh.enable = true;
