@@ -9,6 +9,7 @@ link2mihomo — превращает share-ссылку прокси в гото
     echo 'vmess://...' | python3 link2mihomo.py > config.yaml
     python3 link2mihomo.py 'vmess://...' | sudo tee /etc/mihomo/config.yaml
     xclip -o | python3 link2mihomo.py --nix        # выдать блок для configuration.nix
+    python3 link2mihomo.py 'vmess://...' --split-ru --block-ads
 
 Ключи:
     --name NAME         имя прокси в конфиге (по умолчанию из ссылки)
@@ -23,6 +24,10 @@ link2mihomo — превращает share-ссылку прокси в гото
     --insecure          всегда пропускать проверку сертификата
     --nix               вывести блок services.mihomo вместо YAML
     --block-quic        резать UDP/443 (лечит зависающий YouTube)
+    --split-ru          RU-домены и IP напрямую, остальное в туннель
+    --block-ads         резать рекламу по списку category-ads-all
+    --direct-dns LIST   резолвер для прямых соединений; ТОЛЬКО DoH/DoT,
+                        обычный DNS перехватывается dns-hijack и не работает
     --dump              для vpn://: показать расшифрованный JSON и выйти
 """
 
@@ -413,6 +418,30 @@ def parse_vpn(link, args):
 
 # ----------------------------------------------------------------- сборка
 
+MRS_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo"
+
+# name -> (behavior, путь внутри репозитория)
+RULESETS = {
+    "private-domain": ("domain", "geosite/private.mrs"),
+    "private-ip":     ("ipcidr", "geoip/private.mrs"),
+    "ru-domain":      ("domain", "geosite/category-ru.mrs"),
+    "ru-ip":          ("ipcidr", "geoip/ru.mrs"),
+    "ads":            ("domain", "geosite/category-ads-all.mrs"),
+}
+
+
+def ruleset_entry(name):
+    behavior, path = RULESETS[name]
+    return {
+        "type": "http",
+        "format": "mrs",
+        "behavior": behavior,
+        "interval": 86400,
+        "path": f"./ruleset/{name}.mrs",
+        "url": f"{MRS_BASE}/{path}",
+    }
+
+
 def build_config(proxy, args):
     cfg = {
         "mixed-port": args.port,
@@ -448,16 +477,47 @@ def build_config(proxy, args):
         dns["fake-ip-range"] = "198.18.0.1/16"
         dns["fake-ip-filter"] = [
             "*.lan", "*.local", "*.localdomain", "+.home.arpa",
-            "localhost.ptlogin2.qq.com",
         ]
+    if args.split_ru and args.direct_dns.strip():
+        # ВАЖНО: dns-hijack ловит ВЕСЬ трафик на порт 53, включая исходящие
+        # запросы самого mihomo. Поэтому обычный IP-резолвер здесь недостижим:
+        # запрос к нему возвращается фейковым адресом, и прямые соединения
+        # остаются без настоящего IP. Работают только DoH/DoT (443/853).
+        servers = [s.strip() for s in args.direct_dns.split(",") if s.strip()]
+        plain = [s for s in servers if not re.match(r"^(https|tls|quic)://", s)]
+        if plain:
+            print("предупреждение: direct-nameserver по обычному DNS "
+                  f"({', '.join(plain)}) будет перехвачен dns-hijack и не "
+                  "заработает. Используй DoH/DoT-адрес либо оставь пустым.",
+                  file=sys.stderr)
+        dns["direct-nameserver"] = servers
     cfg["dns"] = dns
+
+    # --- наборы правил
+    wanted = []
+    if args.split_ru:
+        wanted += ["private-domain", "private-ip", "ru-domain", "ru-ip"]
+    if args.block_ads:
+        wanted.insert(0, "ads")
+    if wanted:
+        cfg["rule-providers"] = {n: ruleset_entry(n) for n in wanted}
 
     cfg["proxies"] = [proxy]
 
+    # --- порядок правил принципиален:
+    #     доменные раньше адресных (при fake-ip IP ещё не настоящий),
+    #     REJECT для QUIC — после прямых, иначе прибьёт HTTP/3 и для них
     rules = []
+    if args.block_ads:
+        rules.append("RULE-SET,ads,REJECT")
+    if args.split_ru:
+        rules += [
+            "RULE-SET,private-domain,DIRECT",
+            "RULE-SET,private-ip,DIRECT,no-resolve",
+            "RULE-SET,ru-domain,DIRECT",
+            "RULE-SET,ru-ip,DIRECT",
+        ]
     if args.block_quic:
-        # YouTube и прочие уходят в HTTP/3 по UDP 443; если UDP через прокси
-        # не работает, браузер залипает до таймаута вместо отката на TCP
         rules.append("AND,((NETWORK,udp),(DST-PORT,443)),REJECT")
     rules.append(f"MATCH,{proxy['name']}")
     cfg["rules"] = rules
@@ -509,6 +569,13 @@ def main():
     ap.add_argument("--no-tun", action="store_true")
     ap.add_argument("--block-quic", action="store_true",
                     help="резать UDP/443, чтобы браузер не залипал на HTTP/3")
+    ap.add_argument("--split-ru", action="store_true",
+                    help="российские домены и IP — напрямую, остальное в туннель")
+    ap.add_argument("--block-ads", action="store_true",
+                    help="резать рекламные домены по списку category-ads-all")
+    ap.add_argument("--direct-dns", default="",
+                    help="резолвер для прямых соединений; только DoH/DoT, "
+                         "обычный DNS перехватывается dns-hijack")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--insecure", action="store_true")
     ap.add_argument("--nix", action="store_true")
@@ -558,6 +625,12 @@ def main():
         notes.append("Если ютуб висит, а остальное открывается — попробуй "
                      "--block-quic (UDP/443 в REJECT) или добавь в прокси "
                      "packet-encoding: xudp")
+    if args.split_ru:
+        notes.append("direct-nameserver намеренно не задан: dns-hijack ловит весь "
+                     "порт 53, включая исходящие запросы самого mihomo, поэтому "
+                     "обычный резолвер там уходит в петлю. Прямые домены "
+                     "резолвятся общим nameserver по DoH. Если нужен локальный "
+                     "резолв CDN — только DoH-адрес через --direct-dns.")
     notes.append("Проверка после применения: getent hosts www.youtube.com "
                  "должен вернуть 198.18.x.x — значит отвечает mihomo, а не провайдер")
     for n in notes:
