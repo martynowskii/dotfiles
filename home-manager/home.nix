@@ -49,8 +49,15 @@ in
   home.file.".vim/vimrc".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/vim/vimrc.vim";
 
+  nixpkgs.config.allowUnfreePredicate = pkg:
+    builtins.elem (lib.getName pkg) [
+      "claude-code"
+    ];
+
+
   home.packages = with pkgs; [
     bat
+    claude-code
     gcc
     gnumake
     python314

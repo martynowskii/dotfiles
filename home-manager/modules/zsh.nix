@@ -32,7 +32,7 @@ in
     };
 
     shellAliases = {
-      hms = "home-manager switch -b backup";
+      hms = "HOME_MANAGER_BACKUP_EXT=backup HOME_MANAGER_BACKUP_OVERWRITE=1 home-manager switch";
       nrs = "sudo nixos-rebuild switch";
     };
 
