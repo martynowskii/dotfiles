@@ -10,9 +10,10 @@
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
   environment.systemPackages = with pkgs; [
-    # alacritty
     chromium
     git
+    fastfetch
+    ffmpeg
     jq
     libimobiledevice
     noctalia-shell
@@ -20,6 +21,11 @@
     wget
     wl-clipboard
     wtype
+
+    linux-enable-ir-emitter
+    pciutils
+    usbutils
+    v4l-utils
 
     # Needed for appicons in noctalia
     tela-icon-theme
@@ -41,9 +47,6 @@
   programs = {
     # Чтобы zsh был доступен как login shell
     zsh.enable = true;
-
-    # Нужны права на systemd и /etc
-    amnezia-vpn.enable = true;
 
     # Регистрирует сессию и настраивает что-то системное
     niri.enable = true;
@@ -69,4 +72,7 @@
 
   # Enable the OpenSSH daemon.
   # services.openssh.enable = true;
+
+  # For howdy
+  services.linux-enable-ir-emitter.enable = true;
 }

@@ -9,6 +9,7 @@
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
       ./modules/components.nix
+      ./modules/network.nix
       ./modules/system.nix
     ];
 
