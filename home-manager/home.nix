@@ -5,6 +5,7 @@ let
 in
 {
   imports = [
+    ./modules/claude.nix
     ./modules/foot.nix
     ./modules/niri.nix
     ./modules/nvim.nix
@@ -49,15 +50,10 @@ in
   home.file.".vim/vimrc".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/vim/vimrc.vim";
 
-  nixpkgs.config.allowUnfreePredicate = pkg:
-    builtins.elem (lib.getName pkg) [
-      "claude-code"
-    ];
-
+  # claude-code and its unfree predicate live in ./modules/claude.nix.
 
   home.packages = with pkgs; [
     bat
-    claude-code
     gcc
     gnumake
     python314
