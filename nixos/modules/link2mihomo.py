@@ -516,6 +516,10 @@ def build_config(proxy, args):
     rules = []
     if args.block_ads:
         rules.append("RULE-SET,ads,REJECT")
+    # Раньше всех остальных DIRECT: доменное правило должно выигрывать
+    # у наборов, иначе домен уйдёт туда, куда его определит ruleset
+    for suffix in args.direct_domain:
+        rules.append(f"DOMAIN-SUFFIX,{suffix},DIRECT")
     if args.split_ru:
         rules += [
             "RULE-SET,private-domain,DIRECT",
@@ -583,6 +587,11 @@ def main():
                     help="российские домены и IP — напрямую, остальное в туннель")
     ap.add_argument("--block-ads", action="store_true",
                     help="резать рекламные домены по списку category-ads-all")
+    ap.add_argument("--direct-domain", action="append", default=[], metavar="SUFFIX",
+                    help="доменный суффикс, идущий напрямую мимо туннеля; можно "
+                         "повторять. В отличие от --direct-process работает при "
+                         "любом sandbox'е сервиса: сопоставление идёт по домену, "
+                         "а не по процессу")
     ap.add_argument("--direct-process", action="append", default=[], metavar="NAME",
                     help="имя процесса, чей трафик идёт напрямую мимо туннеля; "
                          "можно повторять. Нужно торрент-клиентам: их пиры "
