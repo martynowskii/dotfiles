@@ -517,6 +517,10 @@ def build_config(proxy, args):
             "RULE-SET,ru-domain,DIRECT",
             "RULE-SET,ru-ip,DIRECT",
         ]
+    # Процессы, которым туннель мешает. Раньше block_quic: иначе UDP/443
+    # такого процесса попадёт под REJECT и не дойдёт до правила DIRECT
+    for name in args.direct_process:
+        rules.append(f"PROCESS-NAME,{name},DIRECT")
     if args.block_quic:
         rules.append("AND,((NETWORK,udp),(DST-PORT,443)),REJECT")
     rules.append(f"MATCH,{proxy['name']}")
@@ -573,6 +577,11 @@ def main():
                     help="российские домены и IP — напрямую, остальное в туннель")
     ap.add_argument("--block-ads", action="store_true",
                     help="резать рекламные домены по списку category-ads-all")
+    ap.add_argument("--direct-process", action="append", default=[], metavar="NAME",
+                    help="имя процесса, чей трафик идёт напрямую мимо туннеля; "
+                         "можно повторять. Нужно торрент-клиентам: их пиры "
+                         "и DHT через прокси медленные, а трекеры за Cloudflare "
+                         "блокируют IP выходного узла")
     ap.add_argument("--direct-dns", default="",
                     help="резолвер для прямых соединений; только DoH/DoT, "
                          "обычный DNS перехватывается dns-hijack")
