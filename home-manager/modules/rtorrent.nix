@@ -40,9 +40,14 @@ in
       # Bootstrap-узлы DHT. В libtorrent-rakshasa они НЕ зашиты: без этих
       # строк на чистой установке DHT не с чего стартовать, и при молчащем
       # трекере торрент не найдёт ни одного пира.
-      schedule2 = dht_node_1, 5, 0, ((dht.add_node, "router.bittorrent.com", 6881))
-      schedule2 = dht_node_2, 6, 0, ((dht.add_node, "dht.transmissionbt.com", 6881))
-      schedule2 = dht_node_3, 7, 0, ((dht.add_node, "router.utorrent.com", 6881))
+      #
+      # Форма именно "dht.add_node=host:port" — одной строкой. Вики rtorrent
+      # описывает вариант ((dht.add_node, "host", port)), но он падает с
+      # "Wrong object type: expected: string actual: list"; см.
+      # https://github.com/rakshasa/rtorrent/issues/1155
+      schedule2 = dht_node_1, 5, 0, "dht.add_node=router.bittorrent.com:6881"
+      schedule2 = dht_node_2, 6, 0, "dht.add_node=dht.transmissionbt.com:6881"
+      schedule2 = dht_node_3, 7, 0, "dht.add_node=router.utorrent.com:6881"
       trackers.use_udp.set = yes
 
       # Лимиты. 0 = без ограничения; правь под свой канал
