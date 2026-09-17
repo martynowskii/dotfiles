@@ -451,6 +451,12 @@ def build_config(proxy, args):
         "external-controller": args.controller,
     }
 
+    # Правила PROCESS-NAME молча не срабатывают при дефолтном strict: в этом
+    # режиме mihomo сам решает, искать ли процесс, и в TUN-сетапе решает не
+    # искать. Без always правило просто проваливается в MATCH.
+    if args.direct_process:
+        cfg["find-process-mode"] = "always"
+
     if not args.no_tun:
         cfg["tun"] = {
             "enable": True,
