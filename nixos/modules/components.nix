@@ -22,6 +22,9 @@
     wl-clipboard
     wtype
 
+    # niri сам поднимает его по требованию, когда приложению нужен X11
+    xwayland-satellite
+
     linux-enable-ir-emitter
     pciutils
     usbutils
