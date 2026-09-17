@@ -36,6 +36,13 @@ in
       # значит пробросить на роутере достаточно один 50000/udp+tcp
       dht.mode.set = auto
       protocol.pex.set = yes
+
+      # Bootstrap-узлы DHT. В libtorrent-rakshasa они НЕ зашиты: без этих
+      # строк на чистой установке DHT не с чего стартовать, и при молчащем
+      # трекере торрент не найдёт ни одного пира.
+      schedule2 = dht_node_1, 5, 0, ((dht.add_node, "router.bittorrent.com", 6881))
+      schedule2 = dht_node_2, 6, 0, ((dht.add_node, "dht.transmissionbt.com", 6881))
+      schedule2 = dht_node_3, 7, 0, ((dht.add_node, "router.utorrent.com", 6881))
       trackers.use_udp.set = yes
 
       # Лимиты. 0 = без ограничения; правь под свой канал
