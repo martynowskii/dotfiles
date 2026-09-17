@@ -45,6 +45,10 @@ in
       throttle.min_peers.normal.set = 20
       throttle.max_peers.normal.set = 60
 
+      # Лог: без него не видно ответов трекеров и причин зависших анонсов
+      log.open_file = "log", ${home}/.local/share/rtorrent/rtorrent.log
+      log.add_output = "info", "log"
+
       # Локальный SCGI-сокет — пригодится для rtxmlrpc/flood
       network.scgi.open_local = (cat, (session.path), "rpc.socket")
       schedule2 = scgi_permission, 0, 0, ((execute.nothrow, chmod, "0600", (cat, (session.path), "rpc.socket")))
