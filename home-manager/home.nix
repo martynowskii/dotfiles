@@ -9,6 +9,7 @@ in
     ./modules/foot.nix
     ./modules/niri.nix
     ./modules/nvim.nix
+    ./modules/qbittorrent.nix
     ./modules/rtorrent.nix
     ./modules/zsh.nix
   ];
