@@ -59,6 +59,55 @@ in
         if [ -S "$HOME/.ssh/ssh_auth_sock" ]; then
           export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
         fi
+
+        # --- vi-режим + навигация в стиле macOS ---
+        # Идёт после oh-my-zsh (он ставит bindkey -e), поэтому vi побеждает.
+        # Индикатор режима рисует p10k: сегмент vi_mode у него уже включён,
+        # в command-режиме справа появляется NORMAL.
+        bindkey -v
+        KEYTIMEOUT=1   # без этого Esc срабатывает с задержкой ~0.4 с
+
+        # Alt-клавиши должны работать в обоих режимах.
+        # Последовательности сверены с terminfo foot (kLFT3/kRIT3/kDC3).
+        for _km in viins vicmd; do
+          bindkey -M $_km '^[[1;3D' backward-word       # Alt+←
+          bindkey -M $_km '^[[1;3C' forward-word        # Alt+→
+          bindkey -M $_km '^[[3;3~' kill-word           # Alt+Delete
+          bindkey -M $_km '^H'      backward-kill-word  # Ctrl+Backspace (foot шлёт ^H)
+        done
+        unset _km
+
+        # Это vi-раскладка теряет — в viins они становятся self-insert
+        # или undefined-key, поэтому возвращаем явно.
+        bindkey -M viins '^A'   beginning-of-line
+        bindkey -M viins '^E'   end-of-line
+        bindkey -M viins '^K'   kill-line
+        bindkey -M viins '^Y'   yank
+        bindkey -M viins '^[b'  backward-word
+        bindkey -M viins '^[f'  forward-word
+        bindkey -M viins '^[d'  kill-word
+        bindkey -M viins '^[^?' backward-kill-word      # Alt+Backspace
+
+        # Открыть текущую команду в $EDITOR (nvim) и вернуть отредактированной.
+        # `v` в command-режиме намеренно оставлен за visual-mode, как в vim.
+        autoload -Uz edit-command-line
+        zle -N edit-command-line
+        bindkey -M viins '^X^E' edit-command-line
+        bindkey -M vicmd '^X^E' edit-command-line
+
+        # Форма курсора: линия в insert, блок в command.
+        # add-zle-hook-widget, а не zle -N zle-keymap-select — иначе
+        # перетрём хук p10k и сломаем индикатор NORMAL.
+        autoload -Uz add-zle-hook-widget
+        _cursor_for_keymap() {
+          case ''${KEYMAP:-viins} in
+            vicmd) print -n '\e[2 q' ;;
+            *)     print -n '\e[6 q' ;;
+          esac
+        }
+        zle -N _cursor_for_keymap
+        add-zle-hook-widget zle-keymap-select _cursor_for_keymap
+        add-zle-hook-widget zle-line-init     _cursor_for_keymap
       ''
     ];
   };
