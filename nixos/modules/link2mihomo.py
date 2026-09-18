@@ -451,6 +451,12 @@ def build_config(proxy, args):
         "external-controller": args.controller,
     }
 
+    # Правила PROCESS-NAME молча не срабатывают при дефолтном strict: в этом
+    # режиме mihomo сам решает, искать ли процесс, и в TUN-сетапе решает не
+    # искать. Без always правило просто проваливается в MATCH.
+    if args.direct_process:
+        cfg["find-process-mode"] = "always"
+
     if not args.no_tun:
         cfg["tun"] = {
             "enable": True,
@@ -477,7 +483,7 @@ def build_config(proxy, args):
         dns["fake-ip-range"] = "198.18.0.1/16"
         dns["fake-ip-filter"] = [
             "*.lan", "*.local", "*.localdomain", "+.home.arpa",
-        ]
+        ] + [f"+.{suffix}" for suffix in args.no_fake_ip]
     if args.split_ru and args.direct_dns.strip():
         # ВАЖНО: dns-hijack ловит ВЕСЬ трафик на порт 53, включая исходящие
         # запросы самого mihomo. Поэтому обычный IP-резолвер здесь недостижим:
@@ -510,6 +516,10 @@ def build_config(proxy, args):
     rules = []
     if args.block_ads:
         rules.append("RULE-SET,ads,REJECT")
+    # Раньше всех остальных DIRECT: доменное правило должно выигрывать
+    # у наборов, иначе домен уйдёт туда, куда его определит ruleset
+    for suffix in args.direct_domain:
+        rules.append(f"DOMAIN-SUFFIX,{suffix},DIRECT")
     if args.split_ru:
         rules += [
             "RULE-SET,private-domain,DIRECT",
@@ -577,6 +587,16 @@ def main():
                     help="российские домены и IP — напрямую, остальное в туннель")
     ap.add_argument("--block-ads", action="store_true",
                     help="резать рекламные домены по списку category-ads-all")
+    ap.add_argument("--no-fake-ip", action="append", default=[], metavar="SUFFIX",
+                    help="домен, которому выдавать НАСТОЯЩИЙ ip вместо фейкового. "
+                         "Нужно долгоживущим UDP-клиентам: они резолвят адрес один "
+                         "раз и шлют пакеты много позже, когда fake-ip маппинг уже "
+                         "переиспользован под другой домен, и пакеты теряются")
+    ap.add_argument("--direct-domain", action="append", default=[], metavar="SUFFIX",
+                    help="доменный суффикс, идущий напрямую мимо туннеля; можно "
+                         "повторять. В отличие от --direct-process работает при "
+                         "любом sandbox'е сервиса: сопоставление идёт по домену, "
+                         "а не по процессу")
     ap.add_argument("--direct-process", action="append", default=[], metavar="NAME",
                     help="имя процесса, чей трафик идёт напрямую мимо туннеля; "
                          "можно повторять. Нужно торрент-клиентам: их пиры "

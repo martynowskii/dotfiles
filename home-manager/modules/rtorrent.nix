@@ -36,6 +36,7 @@ in
       # значит пробросить на роутере достаточно один 50000/udp+tcp
       dht.mode.set = auto
       protocol.pex.set = yes
+      trackers.use_udp.set = yes
 
       # Bootstrap-узлы DHT. В libtorrent-rakshasa они НЕ зашиты: без этих
       # строк на чистой установке DHT не с чего стартовать, и при молчащем
@@ -45,10 +46,11 @@ in
       # описывает вариант ((dht.add_node, "host", port)), но он падает с
       # "Wrong object type: expected: string actual: list"; см.
       # https://github.com/rakshasa/rtorrent/issues/1155
-      schedule2 = dht_node_1, 5, 0, "dht.add_node=router.bittorrent.com:6881"
-      schedule2 = dht_node_2, 6, 0, "dht.add_node=dht.transmissionbt.com:6881"
-      schedule2 = dht_node_3, 7, 0, "dht.add_node=router.utorrent.com:6881"
-      trackers.use_udp.set = yes
+      # Проверено ping-запросами KRPC: router.bittorrent.com,
+      # router.utorrent.com, router.bitcomet.com и dht.aelitis.com не
+      # отвечают — держать их бессмысленно. Отвечают только эти два.
+      schedule2 = dht_node_1, 5, 0, "dht.add_node=dht.transmissionbt.com:6881"
+      schedule2 = dht_node_2, 6, 0, "dht.add_node=dht.libtorrent.org:25401"
 
       # Лимиты. 0 = без ограничения; правь под свой канал
       throttle.global_down.max_rate.set_kb = 0
