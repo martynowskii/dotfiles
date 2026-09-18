@@ -483,7 +483,7 @@ def build_config(proxy, args):
         dns["fake-ip-range"] = "198.18.0.1/16"
         dns["fake-ip-filter"] = [
             "*.lan", "*.local", "*.localdomain", "+.home.arpa",
-        ]
+        ] + [f"+.{suffix}" for suffix in args.no_fake_ip]
     if args.split_ru and args.direct_dns.strip():
         # ВАЖНО: dns-hijack ловит ВЕСЬ трафик на порт 53, включая исходящие
         # запросы самого mihomo. Поэтому обычный IP-резолвер здесь недостижим:
@@ -587,6 +587,11 @@ def main():
                     help="российские домены и IP — напрямую, остальное в туннель")
     ap.add_argument("--block-ads", action="store_true",
                     help="резать рекламные домены по списку category-ads-all")
+    ap.add_argument("--no-fake-ip", action="append", default=[], metavar="SUFFIX",
+                    help="домен, которому выдавать НАСТОЯЩИЙ ip вместо фейкового. "
+                         "Нужно долгоживущим UDP-клиентам: они резолвят адрес один "
+                         "раз и шлют пакеты много позже, когда fake-ip маппинг уже "
+                         "переиспользован под другой домен, и пакеты теряются")
     ap.add_argument("--direct-domain", action="append", default=[], metavar="SUFFIX",
                     help="доменный суффикс, идущий напрямую мимо туннеля; можно "
                          "повторять. В отличие от --direct-process работает при "
