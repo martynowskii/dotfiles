@@ -11,10 +11,18 @@
   # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
 
   # Open ports in the firewall.
-  # networking.firewall.allowedTCPPorts = [ ... ];
-  # networking.firewall.allowedUDPPorts = [ ... ];
   # Or disable the firewall altogether.
   # networking.firewall.enable = false;
+
+  # Порты торрент-клиентов. Без них мы «пассивны»: соединиться можно только
+  # с теми пирами, кто сам принимает входящие. Пиры за NAT, а их большинство,
+  # умеют лишь звонить нам — и упираются в закрытый фаервол. Роутер порт
+  # qBittorrent уже пробрасывает через NAT-PMP, дело было только в хосте.
+  #
+  # 12991 — qBittorrent (Session\Port в его конфиге)
+  # 50000 — rtorrent (network.port_range в home-manager/modules/rtorrent.nix)
+  networking.firewall.allowedTCPPorts = [ 12991 50000 ];
+  networking.firewall.allowedUDPPorts = [ 12991 50000 ];
 
   # Нужны права на systemd и /etc
   # programs.amnezia-vpn.enable = true;
