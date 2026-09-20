@@ -6,9 +6,8 @@ in
 {
   imports = [
     ./modules/claude.nix
-    ./modules/foot.nix
     ./modules/niri.nix
-    ./modules/zsh.nix
+    ./shell
     ./tools
   ];
 
@@ -34,17 +33,6 @@ in
     commandLineArgs = [
       "--ozone-platform=wayland"
     ];
-  };
-
-  programs.tmux = {
-    enable = true;
-    keyMode = "vi";
-    escapeTime = 10;
-  };
-
-  programs.fzf = {
-    enable = true;
-    enableZshIntegration = true;
   };
 
   home.file.".vim/vimrc".source =
