@@ -57,7 +57,7 @@ credential_paths=(
 
 for p in "${credential_paths[@]}"; do
   if printf '%s' "$cmd" | grep -Eq "$p"; then
-    deny "Команда обращается к файлу с учётными данными (шаблон: ${p}). Чтение и копирование ключей, токенов и .env запрещено политикой home-manager/modules/claude.nix. Если нужен сам факт наличия файла — спроси пользователя."
+    deny "Команда обращается к файлу с учётными данными (шаблон: ${p}). Чтение и копирование ключей, токенов и .env запрещено политикой home-manager/tools/claude.nix. Если нужен сам факт наличия файла — спроси пользователя."
   fi
 done
 
@@ -78,12 +78,12 @@ done
 # --- 3. self-modification of the permission policy ------------------------
 # The rendered settings.json is read-only in the Nix store, but its source
 # lives in this repo and the agent is allowed to edit the repo.
-policy_paths='(\.claude/(settings\.json|hooks/)|modules/claude\.nix|modules/claude-guard\.sh)'
+policy_paths='(\.claude/(settings\.json|hooks/)|tools/claude\.nix|tools/claude-guard\.sh)'
 mutating='(^|[[:space:]])(sed[[:space:]]+-i|tee|truncate|install|chmod|chown|ln|cp|mv|rm|dd|patch)([[:space:]]|$)|>>?[[:space:]]*[^|&[:space:]]'
 
 if printf '%s' "$cmd" | grep -Eq "$policy_paths" &&
   printf '%s' "$cmd" | grep -Eq "$mutating"; then
-  deny "Команда пытается изменить собственную политику разрешений Claude (home-manager/modules/claude.nix, modules/claude-guard.sh или ~/.claude/). Агент не правит правила, которые его ограничивают: опиши нужное изменение пользователю словами, он применит его сам. Чтение этих файлов не запрещено."
+  deny "Команда пытается изменить собственную политику разрешений Claude (home-manager/tools/claude.nix, tools/claude-guard.sh или ~/.claude/). Агент не правит правила, которые его ограничивают: опиши нужное изменение пользователю словами, он применит его сам. Чтение этих файлов не запрещено."
 fi
 
 # --- 4. credentials in a staged commit -----------------------------------

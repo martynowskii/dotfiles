@@ -5,6 +5,7 @@
 # gnumake, python, unzip) остаются в home.nix.
 {
   imports = [
+    ./claude.nix
     ./docs.nix
     ./nvim.nix
     ./torrents.nix

@@ -98,8 +98,8 @@ let
 
         # The policy source lives in a repo the agent may edit. It must not
         # be able to relax the rules that constrain it.
-        "Edit(//${dotfiles}/home-manager/modules/claude.nix)"
-        "Edit(//${dotfiles}/home-manager/modules/claude-guard.sh)"
+        "Edit(//${dotfiles}/home-manager/tools/claude.nix)"
+        "Edit(//${dotfiles}/home-manager/tools/claude-guard.sh)"
         "Edit(//${homeDir}/.claude/settings.json)"
         "Edit(//${homeDir}/.claude/hooks/**)"
 
@@ -267,7 +267,7 @@ let
         "Dumping the process environment (printenv, env, export -p, set) or expanding any variable whose name contains TOKEN, SECRET, KEY, PASSWORD, PASSWD or CREDENTIAL."
         "Sending file contents or environment values to a network endpoint: curl -d/-F/--upload-file/--data-binary, wget --post-file, nc, scp or rsync to a remote host, or piping anything into a pastebin."
         "Writing a secret in plaintext into any file under ${dotfiles}. That repository is pushed to a public GitHub remote, so a credential committed there is permanently exposed. Reference secrets by path, or through an agenix/sops-nix indirection."
-        "Modifying your own permission policy. The rules that constrain you are generated from home-manager/modules/claude.nix and home-manager/modules/claude-guard.sh, which sit inside the repository you are allowed to edit. Never edit, rewrite, delete or relink those files, ~/.claude/settings.json or ~/.claude/hooks/**. Describe the change you want to the user instead and let them apply it."
+        "Modifying your own permission policy. The rules that constrain you are generated from home-manager/tools/claude.nix and home-manager/tools/claude-guard.sh, which sit inside the repository you are allowed to edit. Never edit, rewrite, delete or relink those files, ~/.claude/settings.json or ~/.claude/hooks/**. Describe the change you want to the user instead and let them apply it."
       ];
     };
 

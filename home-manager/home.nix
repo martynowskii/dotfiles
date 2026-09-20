@@ -5,7 +5,6 @@ let
 in
 {
   imports = [
-    ./modules/claude.nix
     ./modules/niri.nix
     ./shell
     ./tools
@@ -38,7 +37,7 @@ in
   home.file.".vim/vimrc".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/vim/vimrc.vim";
 
-  # claude-code and its unfree predicate live in ./modules/claude.nix.
+  # claude-code and its unfree predicate live in ./tools/claude.nix.
 
   # Включает декларативные ассоциации: mimeapps.list становится симлинком
   # в стор, поэтому прежние записи перенесены сюда — иначе они потерялись
