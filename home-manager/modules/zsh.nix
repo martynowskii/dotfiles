@@ -34,6 +34,9 @@ in
     shellAliases = {
       hms = "HOME_MANAGER_BACKUP_EXT=backup HOME_MANAGER_BACKUP_OVERWRITE=1 home-manager switch";
       nrs = "sudo nixos-rebuild switch";
+
+      # Привычка из macOS. Ассоциации живут в xdg.mimeApps (home.nix).
+      open = "xdg-open";
     };
 
     plugins = [
@@ -94,6 +97,37 @@ in
         zle -N edit-command-line
         bindkey -M viins '^X^E' edit-command-line
         bindkey -M vicmd '^X^E' edit-command-line
+
+        # --- Просмотр .doc/.docx ---
+        # doc file     — текст в пейджер (docx через pandoc, doc через antiword)
+        # doc -v file  — вёрстка .doc в zathura через PostScript.
+        # Кодировка у antiword разная по режимам: UTF-8.txt для текста,
+        # 8859-5.txt для PostScript (PS+UTF-8 он не поддерживает, а PDF
+        # с кириллицей не умеет вовсе — отсюда путь через .ps).
+        doc() {
+          emulate -L zsh
+          local visual=0
+          [[ $1 == -v ]] && { visual=1; shift; }
+          local f=$1
+          [[ -r $f ]] || { print -u2 "doc: не читается: $f"; return 1 }
+
+          if (( visual )); then
+            case $f in
+              *.doc)
+                local ps=$(mktemp --suffix=.ps)
+                antiword -p a4 -m 8859-5.txt -- "$f" > $ps && zathura $ps
+                rm -f $ps ;;
+              *.pdf|*.ps|*.djvu|*.epub) zathura "$f" ;;
+              *) print -u2 "doc -v: только .doc (docx — конвертируй в pdf)"; return 1 ;;
+            esac
+          else
+            case $f in
+              *.docx) pandoc -t plain -- "$f" | ''${=PAGER:-less} ;;
+              *.doc)  antiword -m UTF-8.txt -- "$f" | ''${=PAGER:-less} ;;
+              *) print -u2 "doc: не .doc/.docx: $f"; return 1 ;;
+            esac
+          fi
+        }
 
         # Форма курсора: линия в insert, блок в command.
         # add-zle-hook-widget, а не zle -N zle-keymap-select — иначе
