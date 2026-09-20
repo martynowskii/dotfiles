@@ -69,6 +69,29 @@ in
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
         "doc-reader.desktop";
 
+      "image/png" = "imv.desktop";
+      "image/jpeg" = "imv.desktop";
+      "image/gif" = "imv.desktop";
+      "image/webp" = "imv.desktop";
+      "image/bmp" = "imv.desktop";
+      "image/tiff" = "imv.desktop";
+      "image/svg+xml" = "imv.desktop";
+      "image/avif" = "imv.desktop";
+
+      "video/mp4" = "mpv.desktop";
+      "video/x-matroska" = "mpv.desktop";
+      "video/webm" = "mpv.desktop";
+      "video/quicktime" = "mpv.desktop";
+      "video/x-msvideo" = "mpv.desktop";
+      "video/mpeg" = "mpv.desktop";
+
+      "audio/mpeg" = "mpv.desktop";
+      "audio/flac" = "mpv.desktop";
+      "audio/ogg" = "mpv.desktop";
+      "audio/opus" = "mpv.desktop";
+      "audio/x-wav" = "mpv.desktop";
+      "audio/mp4" = "mpv.desktop";
+
       "text/plain" = "nvim-term.desktop";
       "text/markdown" = "nvim-term.desktop";
       "inode/directory" = "yazi-term.desktop";

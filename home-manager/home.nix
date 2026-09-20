@@ -41,6 +41,8 @@ in
     bat
     gcc
     gnumake
+    imv
+    mpv
     python314
     telegram-desktop
     tree
