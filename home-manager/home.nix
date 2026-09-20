@@ -37,8 +37,6 @@ in
 
   # claude-code and its unfree predicate live in ./modules/claude.nix.
 
-  # Утилиты без собственной конфигурации. Всё, что требует настройки,
-  # живёт в modules/.
   home.packages = with pkgs; [
     bat
     gcc

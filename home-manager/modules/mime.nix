@@ -1,18 +1,9 @@
 { pkgs, ... }:
 
-# Чем открываются файлы. mimeapps.list становится симлинком в стор,
-# поэтому прежние записи, которые раньше правились вручную и
-# приложениями, перенесены сюда — иначе они потерялись бы при первом
-# переключении. Следствие: файл read-only и приложения больше не
-# пропишут себя сами.
-
 let
-  # Обработчик для .doc/.docx: графического приложения для них нет,
-  # но xdg-open требует .desktop, поэтому читалка оформлена как
-  # приложение. Пути к pandoc и antiword абсолютные: окружение при
-  # запуске через xdg-open может не содержать ~/.nix-profile/bin.
-  # Кодировку antiword сам не угадывает, без -m UTF-8.txt выдаёт
-  # кракозябры.
+  # Для .doc/.docx нет GUI-приложения, а xdg-open требует .desktop.
+  # Пути абсолютные: в окружении xdg-open может не быть ~/.nix-profile/bin.
+  # antiword без -m UTF-8.txt выдаёт кракозябры.
   docReader = pkgs.writeShellScriptBin "doc-reader" ''
     f=''${1:-}
     if [ ! -r "$f" ]; then
@@ -30,8 +21,6 @@ in
 {
   home.packages = [ docReader ];
 
-  # Открывается в отдельном окне foot: xdg-open не умеет отдавать
-  # вывод в текущий терминал.
   xdg.desktopEntries.doc-reader = {
     name = "Doc reader";
     comment = "Читать .doc и .docx в пейджере";
@@ -44,17 +33,17 @@ in
     ];
   };
 
+  # enable делает mimeapps.list симлинком в стор: прежние записи
+  # перенесены сюда, сами приложения себя больше не пропишут.
   xdg.mimeApps = {
     enable = true;
 
     defaultApplications = {
-      # Документы — всё, что умеет zathura с текущим набором плагинов.
       "application/pdf" = "org.pwmt.zathura.desktop";
       "application/postscript" = "org.pwmt.zathura.desktop";
       "application/epub+zip" = "org.pwmt.zathura.desktop";
       "image/vnd.djvu" = "org.pwmt.zathura.desktop";
 
-      # zathura эти два формата не открывает — отдаём читалке выше.
       "application/msword" = "doc-reader.desktop";
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
         "doc-reader.desktop";

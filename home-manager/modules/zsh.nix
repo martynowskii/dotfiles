@@ -35,7 +35,6 @@ in
       hms = "HOME_MANAGER_BACKUP_EXT=backup HOME_MANAGER_BACKUP_OVERWRITE=1 home-manager switch";
       nrs = "sudo nixos-rebuild switch";
 
-      # Привычка из macOS. Ассоциации живут в modules/mime.nix.
       open = "xdg-open";
     };
 

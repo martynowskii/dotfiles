@@ -1,8 +1,6 @@
 { config, pkgs, ... }:
 
-# Два клиента с разным назначением: rtorrent как демон под постоянные
-# раздачи (конфиг декларативный, лежит здесь), qbittorrent — руками,
-# когда нужен GUI. Порты 50000 и 12991 открыты в nixos/modules/network.nix.
+# Порты 50000 и 12991 открыты в nixos/modules/network.nix.
 let
   home = config.home.homeDirectory;
 
