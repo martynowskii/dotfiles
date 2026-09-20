@@ -6,7 +6,6 @@ in
 {
   imports = [
     ./modules
-    ./shell
     ./tools
   ];
 
