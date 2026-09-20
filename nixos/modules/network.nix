@@ -20,7 +20,7 @@
   # qBittorrent уже пробрасывает через NAT-PMP, дело было только в хосте.
   #
   # 12991 — qBittorrent (Session\Port в его конфиге)
-  # 50000 — rtorrent (network.port_range в home-manager/modules/torrents.nix)
+  # 50000 — rtorrent (network.port_range в home-manager/modules/torrent.nix)
   networking.firewall.allowedTCPPorts = [ 12991 50000 ];
   networking.firewall.allowedUDPPorts = [ 12991 50000 ];
 

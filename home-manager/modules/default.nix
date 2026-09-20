@@ -8,11 +8,10 @@
     ./claude.nix
     ./docs.nix
     ./foot.nix
-    ./fzf.nix
     ./niri.nix
     ./nvim.nix
-    ./tmux.nix
-    ./torrents.nix
+    ./sh-tools.nix
+    ./torrent.nix
     ./zsh.nix
   ];
 }
