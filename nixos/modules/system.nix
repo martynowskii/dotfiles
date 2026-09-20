@@ -15,11 +15,6 @@
     HandleLidSwitchExternalPower = "ignore";
   };
 
-  xdg.portal = {
-    enable = true;
-    extraPortals = with pkgs; [ xdg-desktop-portal-gtk ];
-  };
-
   # Set your time zone.
   time.timeZone = "Europe/Moscow";
 
