@@ -4,7 +4,9 @@
   environment.sessionVariables = {
     NIXOS_OZONE_WL = "1";
     QT_QPA_PLATFORM = "wayland;xcb";
-    QT_QPA_PLATFORMTHEME = "gtk3";
+    # gtk3 заставляет Qt рисовать свой GTK-диалог мимо портала,
+    # из-за чего telegram не звал termfilechooser.
+    QT_QPA_PLATFORMTHEME = "xdgdesktopportal";
   };
 
   # List packages installed in system profile.

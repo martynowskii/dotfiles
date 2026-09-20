@@ -8,14 +8,14 @@ let
     multiple="$1"; directory="$2"; save="$3"; path="$4"; out="$5"
 
     if [ "$directory" = "1" ]; then
-      ${pkgs.foot}/bin/foot --title=termfilechooser \
+      ${pkgs.foot}/bin/foot --app-id=termfilechooser --title=termfilechooser \
         ${pkgs.yazi}/bin/yazi --chooser-file="$out" --cwd-file="$out.1" "$path"
       if [ ! -s "$out" ] && [ -s "$out.1" ]; then
         cat "$out.1" > "$out"
       fi
       rm -f "$out.1"
     else
-      ${pkgs.foot}/bin/foot --title=termfilechooser \
+      ${pkgs.foot}/bin/foot --app-id=termfilechooser --title=termfilechooser \
         ${pkgs.yazi}/bin/yazi --chooser-file="$out" "$path"
     fi
   '';
@@ -28,7 +28,4 @@ in
     open_mode=suggested
     save_mode=suggested
   '';
-
-  # Без этого chromium рисует свой GTK-диалог вместо портала.
-  home.sessionVariables.GTK_USE_PORTAL = "1";
 }

@@ -329,6 +329,14 @@ window-rule {
     open-floating true
 }
 
+// Диалог выбора файлов (termfilechooser -> yazi).
+window-rule {
+    match app-id=r#"^termfilechooser$"#
+    open-floating true
+    default-column-width { fixed 1100; }
+    default-window-height { fixed 700; }
+}
+
 // Example: block out two password managers from screen capture.
 // (This example rule is commented out with a "/-" in front.)
 /-window-rule {
