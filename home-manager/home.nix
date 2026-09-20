@@ -5,7 +5,7 @@ let
 in
 {
   imports = [
-    ./modules/niri.nix
+    ./modules
     ./shell
     ./tools
   ];
