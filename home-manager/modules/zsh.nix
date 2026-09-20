@@ -36,7 +36,7 @@ in
       nrs = "sudo nixos-rebuild switch";
 
       # Привычка из macOS. Ассоциации — в xdg.mimeApps: схемы в home.nix,
-      # документы в tools/docs.nix.
+      # документы в modules/docs.nix.
       open = "xdg-open";
     };
 

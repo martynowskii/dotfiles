@@ -5,6 +5,7 @@
 # списком в home.packages, отдельный модуль им ничего не добавит.
 {
   imports = [
+    ./claude.nix
     ./docs.nix
     ./foot.nix
     ./fzf.nix

@@ -6,7 +6,6 @@ in
 {
   imports = [
     ./modules
-    ./tools
   ];
 
   home.username = "arthr";
@@ -36,13 +35,13 @@ in
   home.file.".vim/vimrc".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/vim/vimrc.vim";
 
-  # claude-code and its unfree predicate live in ./tools/claude.nix.
+  # claude-code and its unfree predicate live in ./modules/claude.nix.
 
   # Включает декларативные ассоциации: mimeapps.list становится симлинком
   # в стор, поэтому прежние записи перенесены сюда — иначе они потерялись
   # бы при первом переключении. Следствие: файл read-only и приложения
   # больше не пропишут себя сами.
-  # Ассоциации на документы добавляет tools/docs.nix.
+  # Ассоциации на документы добавляет modules/docs.nix.
   xdg.mimeApps = {
     enable = true;
 
@@ -60,7 +59,7 @@ in
   };
 
   # Утилиты без собственной конфигурации. Всё, что требует настройки,
-  # живёт в modules/ или tools/.
+  # живёт в modules/.
   home.packages = with pkgs; [
     bat
     gcc
