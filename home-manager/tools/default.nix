@@ -7,5 +7,6 @@
   imports = [
     ./docs.nix
     ./nvim.nix
+    ./torrents.nix
   ];
 }

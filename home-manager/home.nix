@@ -8,8 +8,6 @@ in
     ./modules/claude.nix
     ./modules/foot.nix
     ./modules/niri.nix
-    ./modules/qbittorrent.nix
-    ./modules/rtorrent.nix
     ./modules/zsh.nix
     ./tools
   ];
