@@ -21,16 +21,37 @@ in
 {
   home.packages = [ docReader ];
 
-  xdg.desktopEntries.doc-reader = {
-    name = "Doc reader";
-    comment = "Читать .doc и .docx в пейджере";
-    exec = "${pkgs.foot}/bin/foot ${docReader}/bin/doc-reader %f";
-    terminal = false;
-    noDisplay = true;
-    mimeType = [
-      "application/msword"
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ];
+  # Terminal=true в штатных .desktop на голом niri не отрабатывает,
+  # поэтому терминал задан явно. nvim и yazi берутся из PATH: neovim
+  # закреплён отдельным пином в nvim.nix.
+  xdg.desktopEntries = {
+    doc-reader = {
+      name = "Doc reader";
+      comment = "Читать .doc и .docx в пейджере";
+      exec = "${pkgs.foot}/bin/foot ${docReader}/bin/doc-reader %f";
+      terminal = false;
+      noDisplay = true;
+      mimeType = [
+        "application/msword"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ];
+    };
+
+    nvim-term = {
+      name = "Neovim";
+      exec = "${pkgs.foot}/bin/foot nvim %f";
+      terminal = false;
+      noDisplay = true;
+      mimeType = [ "text/plain" "text/markdown" ];
+    };
+
+    yazi-term = {
+      name = "Yazi";
+      exec = "${pkgs.foot}/bin/foot yazi %f";
+      terminal = false;
+      noDisplay = true;
+      mimeType = [ "inode/directory" ];
+    };
   };
 
   # enable делает mimeapps.list симлинком в стор: прежние записи
@@ -47,6 +68,10 @@ in
       "application/msword" = "doc-reader.desktop";
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
         "doc-reader.desktop";
+
+      "text/plain" = "nvim-term.desktop";
+      "text/markdown" = "nvim-term.desktop";
+      "inode/directory" = "yazi-term.desktop";
 
       "x-scheme-handler/tg" = "org.telegram.desktop.desktop";
       "x-scheme-handler/tonsite" = "org.telegram.desktop.desktop";
