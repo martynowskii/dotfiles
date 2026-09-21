@@ -68,7 +68,19 @@ let
       nx "$@"
     '';
   };
+
+  # Пункт в лаунчере. Сам пакет NX ставит свой — "Siemens NX 10.0.3",
+  # который зовёт голый nx через xwayland-satellite. Этот запускает через
+  # Weston, поэтому назван отдельно: в списке будут оба, и видно, что берёшь.
+  nx-weston-desktop = pkgs.makeDesktopItem {
+    name = "nx-weston";
+    desktopName = "Siemens NX (Weston)";
+    comment = "NX во вложенном Weston — корректно работают меню";
+    exec = "nx-weston %f";
+    categories = [ "Graphics" "Science" "Engineering" ];
+    terminal = false;
+  };
 in
 {
-  home.packages = [ nx-weston ];
+  home.packages = [ nx-weston nx-weston-desktop ];
 }
