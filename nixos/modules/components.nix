@@ -22,6 +22,10 @@
     wl-clipboard
     wtype
 
+    # XWayland для X11-приложений: niri его не встраивает, поднимается
+    # отдельным процессом из niri/config.kdl.
+    xwayland-satellite
+
     linux-enable-ir-emitter
     pciutils
     usbutils

@@ -10,18 +10,10 @@
       ./hardware-configuration.nix
       ./modules/components.nix
       ./modules/network.nix
-      ./modules/siemens-nx.nix
       ./modules/system.nix
     ];
 
   networking.hostName = "nixos"; # Define your hostname.
-
-  # Siemens NX 10.0. Модуль даёт только FHS-окружение и лаунчер;
-  # сам NX ставится отдельно в baseDir — см. nixos/modules/README-nx.md.
-  programs.siemens-nx = {
-    enable = true;
-    licenseServer = "28000@localhost";
-  };
 
   # This option defines the first version of NixOS you have installed on this particular machine,
   # and is used to maintain compatibility with application data (e.g. databases) created on older NixOS versions.
