@@ -49,10 +49,29 @@
    `systemd.tmpfiles`, так что запускай `nx10-env` под `sudo` или
    заранее выдай себе права на каталог.
 
-3. Указать свой лицензионный сервер в `nixos/configuration.nix`:
+3. Указать лицензию в `nixos/configuration.nix`. Установщик на своём шаге
+   тоже про неё спросит, но переменную окружения можно менять когда угодно —
+   переустановка для этого не нужна:
 
    ```nix
+   # сетевая (floating) лицензия — порт@хост, 28000 по умолчанию
    programs.siemens-nx.licenseServer = "28000@твой-хост";
+
+   # либо node-locked: FlexNet принимает в той же переменной путь к файлу
+   programs.siemens-nx.licenseServer = "/opt/siemens/licenses/splm.lic";
+   ```
+
+   Модуль прокидывает это значение и в `SPLM_LICENSE_SERVER`, и в старое
+   `UGS_LICENSE_SERVER` — NX 10 читает оба.
+
+   Если лицензия серверная, `.lic` скармливается не NX, а самому Siemens PLM
+   License Server при его установке; NX потом ходит к нему по сети.
+   Проверить, что NX видит лицензию:
+
+   ```sh
+   nx10-env
+   echo $SPLM_LICENSE_SERVER
+   $UGII_ROOT_DIR/lmtools lmstat -a    # если lmtools есть на носителе
    ```
 
 4. Запуск:

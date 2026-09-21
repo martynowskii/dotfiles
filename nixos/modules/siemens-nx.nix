@@ -25,7 +25,15 @@ let cfg = config.programs.siemens-nx; in
       type = lib.types.str;
       default = "28000@localhost";
       example = "28000@license.example.com";
-      description = "Лицензионный сервер Siemens в формате port@host.";
+      description = ''
+        Куда NX обращается за лицензией. Значение уходит в SPLM_LICENSE_SERVER
+        и UGS_LICENSE_SERVER — NX 10 понимает оба имени.
+
+        Обычно это сервер в формате port@host (порт по умолчанию 28000).
+        FlexNet принимает здесь и путь к .lic-файлу — вариант для node-locked
+        лицензии, когда отдельный сервер не поднимается:
+        "/opt/siemens/licenses/splm.lic".
+      '';
     };
 
     extraPkgs = lib.mkOption {
