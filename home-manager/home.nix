@@ -8,6 +8,7 @@ in
     ./modules/foot.nix
     ./modules/niri.nix
     ./modules/nvim.nix
+    ./modules/nx-weston.nix
     ./modules/zsh.nix
   ];
 
