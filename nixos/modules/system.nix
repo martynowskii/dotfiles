@@ -1,13 +1,6 @@
 { config, lib, pkgs, ... }:
 
 {
-  # Use the systemd-boot EFI boot loader.
-  boot.loader.systemd-boot.enable = true;
-  boot.loader.efi.canTouchEfiVariables = true;
-
-  # Use latest kernel.
-  boot.kernelPackages = pkgs.linuxPackages_latest;
-
   services.upower.enable = true;
   services.power-profiles-daemon.enable = true; # OR services.tuned.enable
   services.logind.settings.Login = {

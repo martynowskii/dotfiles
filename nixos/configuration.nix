@@ -8,6 +8,7 @@
   imports =
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
+      ./modules/boot.nix
       ./modules/components.nix
       ./modules/network.nix
       ./modules/portals.nix
