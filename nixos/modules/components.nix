@@ -27,7 +27,6 @@
     # niri сам поднимает его по требованию, когда приложению нужен X11
     xwayland-satellite
 
-    linux-enable-ir-emitter
     pciutils
     usbutils
     v4l-utils
@@ -78,6 +77,5 @@
   # Enable the OpenSSH daemon.
   # services.openssh.enable = true;
 
-  # For howdy
-  services.linux-enable-ir-emitter.enable = true;
+  # Разблокировка по лицу (howdy + ИК-подсветка) — ./face-unlock.nix
 }

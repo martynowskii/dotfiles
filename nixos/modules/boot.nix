@@ -8,11 +8,7 @@
   # Show only the 10 newest generations in the boot menu.
   boot.loader.systemd-boot.configurationLimit = 10;
 
-  # Standard UEFI 80x25 mode. The panel is 2880x1800, so the mode the firmware
-  # picks on its own leaves the menu font unreadably small; 80x25 roughly
-  # doubles the glyphs. systemd-boot has no font size of its own — the console
-  # mode is the only lever.
-  boot.loader.systemd-boot.consoleMode = "0";
+  # Режим консоли systemd-boot зависит от разрешения панели — см. ./machine.nix
 
   # Use latest kernel.
   boot.kernelPackages = pkgs.linuxPackages_latest;

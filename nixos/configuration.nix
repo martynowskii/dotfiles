@@ -10,6 +10,8 @@
       ./hardware-configuration.nix
       ./modules/boot.nix
       ./modules/components.nix
+      ./modules/face-unlock.nix
+      ./modules/machine.nix
       ./modules/network.nix
       ./modules/portals.nix
       ./modules/system.nix
