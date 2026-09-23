@@ -16,6 +16,7 @@
     git
     fastfetch
     ffmpeg
+    file
     jq
     libimobiledevice
     noctalia-shell
