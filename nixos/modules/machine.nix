@@ -60,5 +60,8 @@
       width = 640;
       height = 360;
     };
+
+    # Панель 2880x1800: шрифт Limine нужно удвоить, иначе не читается.
+    boot.loader.limine.style.graphicalTerminal.font.scale = "2x2";
   };
 }
