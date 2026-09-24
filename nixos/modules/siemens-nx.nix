@@ -23,11 +23,63 @@ let
   # вида -adobe-helvetica-medium-r-normal--12-120-75-75-p-*-iso8859-1, то есть
   # требует именно эти наборы. В пути шрифтов современного X-сервера их уже
   # нет, и Motif молча сваливается на "fixed".
-  fontPath = lib.concatStringsSep "," [
+  fontPathOriginal = lib.concatStringsSep "," [
     "${pkgs.font-adobe-75dpi}/share/fonts/X11/75dpi"
     "${pkgs.font-adobe-100dpi}/share/fonts/X11/100dpi"
     "${pkgs.font-misc-misc}/share/fonts/X11/misc"
   ];
+
+  # Подменные шрифты. Те же XLFD, но обслуживают их современные TTF.
+  #
+  # Смысл: чинить нечего в самом NX. Он просит шрифты жёсткими именами, но
+  # семейств там всего два — adobe-helvetica и adobe-courier, и всего четыре
+  # сочетания с начертанием (курсива NX не просит вовсе). Поэтому вместо
+  # правки трёх десятков строк в файле ресурсов мы объявляем TTF под теми
+  # самыми именами: X-сервер ищет по пути шрифтов по порядку, и если наш
+  # каталог стоит первым, он побеждает настоящие растровые наборы.
+  #
+  # Проверено на шаблоне, который NX просит дословно:
+  #
+  #   только растровые    ширина 27  подъём 11  спуск 3
+  #   подменный первым    ширина 36  подъём 13  спуск 3
+  #
+  # Liberation, а не системный Noto Sans, по двум причинам. Noto Sans
+  # поставляется вариативным файлом, начертания в нём — оси, и mkfontscale
+  # видит там только обычное: жирный, которым NX рисует подписи и заголовки
+  # колонок, стал бы неотличим от обычного. А Liberation Sans вдобавок
+  # метрически совместим с Helvetica — ровно с тем, что NX и просит, так что
+  # зашитые в интерфейс ширины сходятся лучше всего.
+  nx-fonts = pkgs.runCommand "nx-fonts" { } ''
+    dir="$out/share/fonts/nx"
+    mkdir -p "$dir"
+    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationSans-Regular.ttf "$dir/"
+    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationSans-Bold.ttf    "$dir/"
+    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationMono-Regular.ttf "$dir/"
+    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationMono-Bold.ttf    "$dir/"
+
+    # Нули в числовых полях — признак масштабируемого шрифта: под них сервер
+    # подставит любой запрошенный размер.
+    cat > "$dir/fonts.dir" <<'EOF'
+    4
+    LiberationMono-Bold.ttf -adobe-courier-bold-r-normal--0-0-0-0-m-0-iso8859-1
+    LiberationMono-Regular.ttf -adobe-courier-medium-r-normal--0-0-0-0-m-0-iso8859-1
+    LiberationSans-Bold.ttf -adobe-helvetica-bold-r-normal--0-0-0-0-p-0-iso8859-1
+    LiberationSans-Regular.ttf -adobe-helvetica-medium-r-normal--0-0-0-0-p-0-iso8859-1
+    EOF
+    sed -i 's/^    //' "$dir/fonts.dir"
+  '';
+
+  fontPathModern = "${nx-fonts}/share/fonts/nx,${fontPathOriginal}";
+
+  # Выбор пути шрифтов. NX_FONTS=original — вернуть растровые helvetica и
+  # courier, как их задумывал Siemens.
+  fontPathSetup = ''
+    if [ "''${NX_FONTS:-modern}" = original ]; then
+      nx_fp=${fontPathOriginal}
+    else
+      nx_fp=${fontPathModern}
+    fi
+  '';
 
   # Снимок дерева окон вложенного сервера. Нужен, чтобы разбираться с
   # панелями NX по фактам: видно, чем окно себя объявило (WM_CLASS,
@@ -394,12 +446,14 @@ EOF
       }
       trap cleanup EXIT
 
+      ${fontPathSetup}
+
       # shellcheck disable=SC2086
       Xwayland ":$display" \
         -auth "$authfile" \
         -geometry "$NX_GEOMETRY" \
         $fullscreen_arg \
-        -fp ${fontPath} \
+        -fp "$nx_fp" \
         $NX_XWAYLAND_ARGS &
       server_pid=$!
 
@@ -420,12 +474,14 @@ EOF
     display="$NX_GS_DISPLAY"
     authfile="$NX_GS_AUTH"
 
+    ${fontPathSetup}
+
     # -no-host-grab обязателен: NX делает активный grab клавиатуры и мыши для
     # меню, и без флага захват ушёл бы наружу, забрав ввод у всей системы.
     ${pkgs.xorg-server}/bin/Xephyr ":$display" \
       -auth "$authfile" \
       -screen "''${NX_GS_WIDTH}x''${NX_GS_HEIGHT}" \
-      -fp ${fontPath} \
+      -fp "$nx_fp" \
       -resizeable -no-host-grab &
     server_pid=$!
     trap 'kill "$server_pid" 2>/dev/null || true' EXIT
