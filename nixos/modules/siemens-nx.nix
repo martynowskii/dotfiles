@@ -112,13 +112,37 @@ let
     # стартует вовсе.
     export XDG_DATA_DIRS="${pkgs.metacity}/share:${pkgs.gsettings-desktop-schemas}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
+    # Композитор metacity выключаем — и это не про скорость, а про раскладку.
+    # NX сам расставляет свои окна (окно детали, панели Resource Bar) внутри
+    # прямоугольника главного окна, как MDI-детей на Windows, и рассчитывает
+    # при этом на тонкую рамку менеджера образца 2010 года. С включённым
+    # композитором metacity добавляет вокруг каждого окна невидимую область
+    # тени, и рамка выходит +26 пикселей по бокам и +60 сверху — окна
+    # расползаются наружу. Замер на xclock 300x200:
+    #
+    #   по умолчанию        рамка 352x289, клиент внутри со сдвигом +26+60
+    #   compositor='none'   рамка 310x247, клиент внутри со сдвигом  +5+42
+    #
+    # Высоту заголовка так не уменьшить — её задаёт тема GTK, и ни
+    # titlebar-font, ни font-name на неё не влияют (проверено).
+    metacity_cfg=$(mktemp -d)
+    mkdir -p "$metacity_cfg/glib-2.0/settings"
+    cat > "$metacity_cfg/glib-2.0/settings/keyfile" <<'EOF'
+[org/gnome/metacity]
+compositor='none'
+EOF
+
     # Куда смотреть снаружи. Дисплей у нас каждый раз новый, а cookie лежит
     # во временном каталоге, так что без этой записки к вложенному серверу из
     # другого терминала не подключиться — ни nx-dump-windows, ни чем-то ещё.
     session_file="''${XDG_RUNTIME_DIR:-/tmp}/nx-session.env"
     printf 'DISPLAY=%s\nXAUTHORITY=%s\n' "$DISPLAY" "''${XAUTHORITY:-}" > "$session_file"
 
-    ${pkgs.metacity}/bin/metacity &
+    # Настройки подсовываем только metacity, а не всей сессии: XDG_CONFIG_HOME
+    # задан на одну команду, чтобы не сбить с толку NX и не тронуть настоящий
+    # dconf твоего рабочего стола.
+    GSETTINGS_BACKEND=keyfile XDG_CONFIG_HOME="$metacity_cfg" \
+      ${pkgs.metacity}/bin/metacity &
     metacity_pid=$!
 
     # NX_DEBUG=1 — снять дерево окон, когда интерфейс уже сложился. Задержка
@@ -136,7 +160,7 @@ let
 
     # Ждущий снимок убиваем тоже: если закрыть NX раньше срока, он проснётся
     # над уже мёртвым дисплеем и запишет вместо дерева окон ошибку.
-    trap 'kill "$metacity_pid" ''${debug_pid:+"$debug_pid"} 2>/dev/null || true; rm -f "$session_file"' EXIT
+    trap 'kill "$metacity_pid" ''${debug_pid:+"$debug_pid"} 2>/dev/null || true; rm -f "$session_file"; rm -rf "$metacity_cfg"' EXIT
 
     # Без exec: иначе потеряется trap и metacity останется висеть.
     ${nx}/bin/nx "$@"
