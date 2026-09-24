@@ -168,13 +168,21 @@ let
     '';
   };
 
+  # Своя копия, а не имя из темы: имя лаунчер не всегда разрешает, а два
+  # пункта меню надо различать наверняка. У gamescope иконки нет, берём
+  # монитор из adwaita.
+  gamescopeIcon = pkgs.runCommand "nx-gamescope-icon" { } ''
+    install -Dm444 \
+      ${pkgs.adwaita-icon-theme}/share/icons/Adwaita/scalable/devices/video-display.svg \
+      "$out/share/pixmaps/siemens-nx-gamescope.svg"
+  '';
+
   gamescopeDesktop = pkgs.makeDesktopItem {
     name = "siemens-nx-gamescope";
     desktopName = "Siemens NX 10.0.3 (gamescope)";
     comment = "NX через gamescope: увеличение по FSR вместо растягивания композитором";
     exec = "nx-gamescope %f";
-    # Имя из темы значков, чтобы не тащить копию файла из adwaita.
-    icon = "video-display";
+    icon = "siemens-nx-gamescope";
     # Graphics основная, Engineering дополнительная. Двух основных нельзя:
     # пункт задвоится в меню.
     categories = [ "Graphics" "Engineering" ];
@@ -186,6 +194,6 @@ in
 
   gamescope = pkgs.symlinkJoin {
     name = "nx-gamescope";
-    paths = [ gamescopeBin gamescopeDesktop ];
+    paths = [ gamescopeBin gamescopeDesktop gamescopeIcon ];
   };
 }
