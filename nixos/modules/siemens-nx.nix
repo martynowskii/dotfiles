@@ -43,8 +43,17 @@ let
   # в единственном экземпляре.
   nx-weston = pkgs.writeShellApplication {
     name = "nx";
-    runtimeInputs = [ pkgs.weston ];
+    # xkbcomp — им XWayland внутри Weston компилирует раскладку; без него в
+    # выводе появляется "Errors from xkbcomp are not fatal to the X server".
+    runtimeInputs = [ pkgs.weston pkgs.xorg.xkbcomp ];
     text = ''
+      # libxkbcommon ищет описания раскладок по вшитому пути
+      # /usr/share/X11/xkb, которого на NixOS нет, и Weston встречает запуск
+      # парой строк "failed to add default include path". Указываем каталог
+      # явно — niri своим процессам это передаёт сам, а Weston мы запускаем
+      # в обход сессии, поэтому переменную приходится ставить здесь.
+      export XKB_CONFIG_ROOT=${pkgs.xkeyboard_config}/share/X11/xkb
+
       # NX_WESTON=0 — запуск напрямую, без вложенного композитора: X-сервер
       # тогда берётся снаружи (XWayland самого niri, DISPLAY из окружения).
       # Нужно, если Weston не поднимается или надо сравнить поведение.
