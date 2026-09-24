@@ -3,9 +3,17 @@
 # rootful Xwayland — основной: его масштабирует сам niri, поэтому лишнего слоя
 # не нужно. gamescope — запасной, ради апскейлера FSR. Почему так, а не иначе,
 # разобрано в siemens-nx-display.md.
-{ pkgs, nx, session, fontPath }:
+{ lib, pkgs, nx, session }:
 
 let
+  # NX просит шрифты интерфейса жёсткими XLFD вида -adobe-helvetica-…; без
+  # этих каталогов Motif молча сваливается на "fixed".
+  fontPath = lib.concatStringsSep "," [
+    "${pkgs.font-adobe-75dpi}/share/fonts/X11/75dpi"
+    "${pkgs.font-adobe-100dpi}/share/fonts/X11/100dpi"
+    "${pkgs.font-misc-misc}/share/fonts/X11/misc"
+  ];
+
   # Свободный номер дисплея и разовый cookie: -ac открыл бы вложенный сервер
   # любому локальному процессу.
   startDisplay = ''
@@ -64,7 +72,6 @@ let
       fi
 
       ${outputSize}
-      ${fontPath}
 
       # Меньше логического размера — крупнее и мыльнее, больше — мельче и чётче.
       : "''${NX_GEOMETRY:=$logical}"
@@ -78,7 +85,7 @@ let
       Xwayland ":$display" \
         -auth "$authfile" \
         -geometry "$NX_GEOMETRY" \
-        -fp "$nx_fp" \
+        -fp ${fontPath} \
         "''${fullscreen[@]}" &
       server_pid=$!
 
@@ -95,14 +102,12 @@ let
     display="$NX_GS_DISPLAY"
     authfile="$NX_GS_AUTH"
 
-    ${fontPath}
-
     # -no-host-grab обязателен: NX делает активный grab для меню, иначе ввод
     # всей системы уйдёт ему.
     ${pkgs.xorg-server}/bin/Xephyr ":$display" \
       -auth "$authfile" \
       -screen "''${NX_GS_WIDTH}x''${NX_GS_HEIGHT}" \
-      -fp "$nx_fp" \
+      -fp ${fontPath} \
       -resizeable -no-host-grab &
     server_pid=$!
     trap 'kill "$server_pid" 2>/dev/null || true' EXIT

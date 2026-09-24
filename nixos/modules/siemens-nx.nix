@@ -12,11 +12,8 @@ let
     licenseServer = "28000@localhost";
   };
 
-  fontPath = import ./siemens-nx-fonts.nix { inherit lib pkgs; };
   inherit (import ./siemens-nx-session.nix { inherit pkgs nx; }) session dumpWindows;
-  launchers = import ./siemens-nx-launchers.nix {
-    inherit pkgs nx session fontPath;
-  };
+  launchers = import ./siemens-nx-launchers.nix { inherit lib pkgs nx session; };
 in
 {
   imports = [ (siemensDir + "/nix-license-server/license-server-module.nix") ];
