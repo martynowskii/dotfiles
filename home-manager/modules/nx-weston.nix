@@ -86,6 +86,9 @@ let
     desktopName = "Siemens NX (Weston)";
     comment = "NX во вложенном Weston — корректно работают меню";
     exec = "nx-weston %f";
+    # Имя иконки, а не путь: файл ставит сам пакет NX в share/pixmaps,
+    # оба ярлыка ссылаются на одно и то же изображение.
+    icon = "siemens-nx";
     categories = [ "Graphics" "Science" "Engineering" ];
     terminal = false;
   };
