@@ -41,12 +41,40 @@ let
   # Имя намеренно то же, что у пакета, — nx. Ниже обёртка помечена hiPrio и
   # перекрывает bin/nx из пакета, так что команда и пункт в лаунчере остаются
   # в единственном экземпляре.
+  # Запускается уже внутри Weston, на его XWayland: сперва представляется
+  # оконным менеджером, которого NX знает, затем отдаёт управление NX.
+  #
+  # NX опознаёт WM так: читает root._NET_SUPPORTING_WM_CHECK, по нему находит
+  # окно-маркер и сверяет его _NET_WM_NAME со списком, зашитым в libugui.so.
+  # Список ровно такой: Metacity, KWin, GNOME Shell — других NX не знает,
+  # поскольку Siemens поддерживал его на Linux только под RHEL и SLES с GNOME.
+  # Weston представляется как "Weston WM", в журнале появляется
+  # "ugUIidentifyWindowManager: Unrecognized Window Manager", и NX сваливается
+  # в запасную ветку, где панели вроде Истории не пристыковываются, а
+  # разъезжаются отдельными окнами.
+  #
+  # wmname создаёт своё окно-маркер и переписывает root._NET_SUPPORTING_WM_CHECK
+  # на него. Проверено в headless-Weston: до подмены "Weston WM", после —
+  # "Metacity".
+  #
+  # NX_WM_NAME="" отключает подмену.
+  nx-inner = pkgs.writeShellScript "nx-inner" ''
+    if [ -n "''${NX_WM_NAME:-}" ]; then
+      ${pkgs.wmname}/bin/wmname "$NX_WM_NAME" || true
+    fi
+    exec ${nx}/bin/nx "$@"
+  '';
+
   nx-weston = pkgs.writeShellApplication {
     name = "nx";
     # xkbcomp — им XWayland внутри Weston компилирует раскладку; без него в
     # выводе появляется "Errors from xkbcomp are not fatal to the X server".
     runtimeInputs = [ pkgs.weston pkgs.xorg.xkbcomp ];
     text = ''
+      # Имя, которым Weston представится NX. См. комментарий к nx-inner.
+      : "''${NX_WM_NAME:=Metacity}"
+      export NX_WM_NAME
+
       # libxkbcommon ищет описания раскладок по вшитому пути
       # /usr/share/X11/xkb, которого на NixOS нет, и Weston встречает запуск
       # парой строк "failed to add default include path". Указываем каталог
@@ -84,7 +112,7 @@ let
         --xwayland \
         --scale="$NX_WESTON_SCALE" \
         $NX_WESTON_ARGS \
-        -- ${nx}/bin/nx "$@"
+        -- ${nx-inner} "$@"
     '';
   };
 in
