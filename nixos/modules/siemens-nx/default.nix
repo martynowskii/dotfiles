@@ -1,12 +1,12 @@
 # Siemens NX 10: сервер лицензий, сам NX и две команды запуска.
 #
-# Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens — рядом с ними
+# Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens-tmp — рядом с ними
 # ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
 { config, lib, pkgs, ... }:
 
 let
   # Именно path, а не строка: "${siemensDir}" утащил бы носитель в /nix/store.
-  siemensDir = /home/arthr/Documents/univer/Siemens;
+  siemensDir = /home/arthr/Documents/univer/Siemens-tmp;
 
   nx = pkgs.callPackage (siemensDir + "/nix-nx") {
     licenseServer = "${toString config.services.splmLicenseServer.port}@localhost";
