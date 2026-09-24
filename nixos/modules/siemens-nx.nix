@@ -1,7 +1,7 @@
 { lib, pkgs, ... }:
 
 # Всё, что относится к Siemens NX 10: сервер лицензий, сам NX и запуск его во
-# вложенном Weston.
+# вложенном X-сервере с настоящим оконным менеджером.
 #
 # Пакеты живут отдельно, в ~/Documents/univer/Siemens — здесь только их
 # подключение к системе. Каталог вне git и вне /nix/store намеренно: рядом с
@@ -16,103 +16,137 @@ let
     licenseServer = "28000@localhost";   # тот же хост, где включён splmLicenseServer ниже
   };
 
-  # Обёртка запуска. Живёт здесь, а не в пакете, сознательно: NX сам по себе
-  # к Weston отношения не имеет, это потребность конкретно этой машины — niri
-  # поверх Wayland с дробным масштабом. На другой системе пакет ставится как
-  # есть, без композитора-прослойки.
-  #
-  # Чем мешает хостовый XWayland (xwayland-satellite, который niri поднимает
-  # сам на :0):
-  #
-  #   1. Меню. NX рисует их как Motif-приложения девяностых — отдельным окном
-  #      override-redirect по абсолютным координатам, в обход оконного
-  #      менеджера, плюс активный grab указателя и клавиатуры. Без настоящего
-  #      X-оконного менеджера они не разворачиваются. У Weston XWayland
-  #      встроенный, с полноценным WM.
-  #
-  #   2. Масштаб. NX родом из 2014 года и про HiDPI не знает: рисует в
-  #      физических пикселях, и при scale 1.75 интерфейс выходит примерно
-  #      вдвое мельче нужного. Своего масштабирования у него нет, но картинку
-  #      увеличивает сам Weston.
-  #
-  #   3. Окна. Каждый диалог NX — отдельный X11-toplevel, и в тайловом niri
-  #      они разъезжаются по плиткам. Внутри Weston это одно окно.
-  #
-  # Имя намеренно то же, что у пакета, — nx. Ниже обёртка помечена hiPrio и
-  # перекрывает bin/nx из пакета, так что команда и пункт в лаунчере остаются
-  # в единственном экземпляре.
-  # Запускается уже внутри Weston, на его XWayland: сперва представляется
-  # оконным менеджером, которого NX знает, затем отдаёт управление NX.
-  #
-  # NX опознаёт WM так: читает root._NET_SUPPORTING_WM_CHECK, по нему находит
-  # окно-маркер и сверяет его _NET_WM_NAME со списком, зашитым в libugui.so.
-  # Список ровно такой: Metacity, KWin, GNOME Shell — других NX не знает,
-  # поскольку Siemens поддерживал его на Linux только под RHEL и SLES с GNOME.
-  # Weston представляется как "Weston WM", в журнале появляется
-  # "ugUIidentifyWindowManager: Unrecognized Window Manager", и NX сваливается
-  # в запасную ветку, где панели вроде Истории не пристыковываются, а
-  # разъезжаются отдельными окнами.
-  #
-  # wmname создаёт своё окно-маркер и переписывает root._NET_SUPPORTING_WM_CHECK
-  # на него. Проверено в headless-Weston: до подмены "Weston WM", после —
-  # "Metacity".
-  #
-  # NX_WM_NAME="" отключает подмену.
-  nx-inner = pkgs.writeShellScript "nx-inner" ''
-    if [ -n "''${NX_WM_NAME:-}" ]; then
-      ${pkgs.wmname}/bin/wmname "$NX_WM_NAME" || true
-    fi
-    exec ${nx}/bin/nx "$@"
-  '';
+  # Каталоги растровых шрифтов X. NX задаёт шрифты интерфейса жёсткими XLFD
+  # вида -adobe-helvetica-medium-r-normal--12-120-75-75-p-*-iso8859-1, то есть
+  # требует именно эти растровые наборы. В пути шрифтов современного X-сервера
+  # их обычно нет, и Motif молча сваливается на "fixed".
+  fontPath = lib.concatStringsSep "," [
+    "${pkgs.font-adobe-75dpi}/share/fonts/X11/75dpi"
+    "${pkgs.font-adobe-100dpi}/share/fonts/X11/100dpi"
+    "${pkgs.font-misc-misc}/share/fonts/X11/misc"
+  ];
 
-  nx-weston = pkgs.writeShellApplication {
+  # Запуск NX во вложенном X-сервере.
+  #
+  # Живёт здесь, а не в пакете, сознательно: NX сам по себе ни к Xephyr, ни к
+  # metacity отношения не имеет — это потребность конкретно этой машины, niri
+  # поверх Wayland. На другой системе пакет ставится как есть.
+  #
+  # Зачем вообще прослойка. NX опознаёт оконный менеджер так: читает
+  # root._NET_SUPPORTING_WM_CHECK, по нему находит окно-маркер и сверяет его
+  # _NET_WM_NAME со списком, зашитым в libugui.so. Список целиком:
+  #
+  #     Metacity, KWin, GNOME Shell
+  #
+  # Больше NX не знает никого — Siemens поддерживал его на Linux только под
+  # RHEL и SLES с GNOME, а после NX 12 свернул Linux совсем. И niri, и Weston
+  # для него чужие: в журнале появляется "ugUIidentifyWindowManager:
+  # Unrecognized Window Manager", после чего панели, которые должны
+  # пристыковываться (История, Навигатор детали и прочие), разъезжаются
+  # отдельными окнами и не закрываются.
+  #
+  # Подменять одно лишь имя через wmname недостаточно: панели NX расставляет
+  # через _NET_MOVERESIZE_WINDOW, а XWM внутри Weston этот атом не
+  # реализует — у него есть только _NET_FRAME_EXTENTS, _NET_SUPPORTED,
+  # _NET_WM_MOVERESIZE, _NET_WM_STATE и _NET_WM_WINDOW_TYPE. Поэтому здесь
+  # поднимается настоящий Metacity во вложенном Xephyr: NX получает ровно тот
+  # менеджер, под который писался, со всем протоколом целиком.
+  #
+  # Заодно снимается и проблема с меню: NX рисует их отдельными окнами
+  # override-redirect с активным grab, и полноценному X-менеджеру это
+  # привычно, в отличие от xwayland-satellite.
+  nx-nested = pkgs.writeShellApplication {
     name = "nx";
-    # xkbcomp — им XWayland внутри Weston компилирует раскладку; без него в
-    # выводе появляется "Errors from xkbcomp are not fatal to the X server".
-    runtimeInputs = [ pkgs.weston pkgs.xorg.xkbcomp ];
+    runtimeInputs = with pkgs; [
+      xorg-server      # Xephyr
+      metacity
+      xauth
+      util-linux       # mcookie
+      coreutils
+    ];
     text = ''
-      # Имя, которым Weston представится NX. См. комментарий к nx-inner.
-      : "''${NX_WM_NAME:=Metacity}"
-      export NX_WM_NAME
+      # NX_NESTED=0 — запуск напрямую, в X-сервере хозяйской сессии. Панели
+      # при этом разъедутся, зато видно поведение без прослойки.
+      : "''${NX_NESTED:=1}"
 
-      # libxkbcommon ищет описания раскладок по вшитому пути
-      # /usr/share/X11/xkb, которого на NixOS нет, и Weston встречает запуск
-      # парой строк "failed to add default include path". Указываем каталог
-      # явно — niri своим процессам это передаёт сам, а Weston мы запускаем
-      # в обход сессии, поэтому переменную приходится ставить здесь.
-      export XKB_CONFIG_ROOT=${pkgs.xkeyboard_config}/share/X11/xkb
+      # Размер вложенного экрана. По умолчанию — физическое разрешение
+      # панели: X-клиенты под niri рисуются в физических пикселях, логический
+      # размер 1645x1028 тут ни при чём.
+      : "''${NX_SCREEN:=2880x1800}"
 
-      # NX_WESTON=0 — запуск напрямую, без вложенного композитора: X-сервер
-      # тогда берётся снаружи (XWayland самого niri, DISPLAY из окружения).
-      # Нужно, если Weston не поднимается или надо сравнить поведение.
-      : "''${NX_WESTON:=1}"
+      # Прочие аргументы Xephyr. -resizeable позволяет тянуть окно и менять
+      # размер вложенного экрана за ним; -no-host-grab обязателен, иначе
+      # активный grab внутри NX заберёт клавиатуру и мышь у всей системы и
+      # вернуть их будет нечем.
+      : "''${NX_XEPHYR_ARGS:=-resizeable -no-host-grab}"
 
-      # scale в wl_output — целое (int32), дробное масштабирование живёт в
-      # отдельном протоколе, которого здесь нет. Доступны 1, 2, 3; к 1.75
-      # ближе всего 2 — чуть крупнее родного и слегка мягче по краям.
-      : "''${NX_WESTON_SCALE:=2}"
-
-      # На весь экран, чтобы не получилось окно в окне.
-      : "''${NX_WESTON_ARGS:=--fullscreen}"
-
-      if [ "$NX_WESTON" = 0 ]; then
+      if [ "$NX_NESTED" = 0 ]; then
         exec ${nx}/bin/nx "$@"
       fi
 
-      # Форма `weston ... -- программа` делает всю работу сама: запускает
-      # программу, когда композитор готов; выставляет ей DISPLAY своего
-      # XWayland, выбрав свободный номер (хостовый :0 не трогается);
-      # завершается, когда программа вышла. Поэтому ни ожидания сокета в
-      # /tmp/.X11-unix, ни отдельного kill по выходу тут не нужно.
-      #
-      # NX_WESTON_ARGS без кавычек намеренно — это список аргументов.
+      # Свободный номер дисплея. Начинаем с 10, чтобы заведомо разойтись с
+      # хозяйским :0 от xwayland-satellite.
+      display=""
+      for n in $(seq 10 40); do
+        if [ ! -e "/tmp/.X11-unix/X$n" ] && [ ! -e "/tmp/.X$n-lock" ]; then
+          display="$n"
+          break
+        fi
+      done
+      if [ -z "$display" ]; then
+        echo "nx: не нашёл свободного номера дисплея в диапазоне 10-40." >&2
+        exit 1
+      fi
+
+      # Своя авторизация вместо -ac: -ac открыл бы вложенный сервер любому
+      # локальному процессу, а нам нужен ровно этот NX.
+      runtime=$(mktemp -d)
+      authfile="$runtime/Xauthority"
+      xauth -f "$authfile" add ":$display" MIT-MAGIC-COOKIE-1 "$(mcookie)"
+
+      cleanup() {
+        [ -n "''${metacity_pid:-}" ] && kill "$metacity_pid" 2>/dev/null
+        [ -n "''${xephyr_pid:-}" ] && kill "$xephyr_pid" 2>/dev/null
+        rm -rf "$runtime"
+      }
+      trap cleanup EXIT
+
       # shellcheck disable=SC2086
-      exec weston \
-        --backend=wayland \
-        --xwayland \
-        --scale="$NX_WESTON_SCALE" \
-        $NX_WESTON_ARGS \
-        -- ${nx-inner} "$@"
+      Xephyr ":$display" \
+        -auth "$authfile" \
+        -screen "$NX_SCREEN" \
+        -fp ${fontPath} \
+        $NX_XEPHYR_ARGS &
+      xephyr_pid=$!
+
+      # Ждём, пока сокет появится: metacity, запущенный раньше сервера,
+      # просто не подключится.
+      for _ in $(seq 1 100); do
+        if ! kill -0 "$xephyr_pid" 2>/dev/null; then
+          echo "nx: Xephyr завершился, не успев поднять дисплей :$display." >&2
+          exit 1
+        fi
+        [ -e "/tmp/.X11-unix/X$display" ] && break
+        sleep 0.1
+      done
+      if [ ! -e "/tmp/.X11-unix/X$display" ]; then
+        echo "nx: Xephyr не поднял дисплей :$display за 10 секунд." >&2
+        exit 1
+      fi
+
+      export DISPLAY=":$display"
+      export XAUTHORITY="$authfile"
+
+      # Схемы GSettings: metacity читает свои настройки через них и без
+      # каталога схем падает ещё до появления окон.
+      export XDG_DATA_DIRS="${pkgs.metacity}/share:${pkgs.gsettings-desktop-schemas}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
+      metacity &
+      metacity_pid=$!
+
+      # Без exec: иначе потеряется trap, и Xephyr с metacity останутся
+      # висеть после выхода из NX.
+      ${nx}/bin/nx "$@"
     '';
   };
 in
@@ -138,6 +172,6 @@ in
     # Только bin/nx, зато с приоритетом — перекрывает одноимённый файл из
     # пакета. Всё остальное (share/applications, share/pixmaps) берётся
     # оттуда, поэтому пункт в меню по-прежнему один и зовёт просто `nx`.
-    (lib.hiPrio nx-weston)
+    (lib.hiPrio nx-nested)
   ];
 }
