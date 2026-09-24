@@ -13,6 +13,7 @@
       ./modules/face-unlock.nix
       ./modules/machine.nix
       ./modules/network.nix
+      ./modules/pa9.nix
       ./modules/portals.nix
       ./modules/siemens-nx
       ./modules/system.nix
