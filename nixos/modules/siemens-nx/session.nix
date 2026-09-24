@@ -1,8 +1,14 @@
 # Что происходит внутри вложенного дисплея: оконный менеджер и сам NX.
 #
 <<<<<<< HEAD
+<<<<<<< HEAD
 # Metacity не вкусовщина — NX сверяет _NET_WM_NAME со списком из трёх имён,
 # зашитым в libugii.so. Настройки его рамок подобраны замерами, см.
+=======
+# NX опознаёт три WM по _NET_WM_NAME (Metacity, KWin, GNOME Shell). На
+# раскладку панелей это, как выяснилось, не влияет, но metacity — единственный
+# протестированный Siemens вариант. Настройки рамок подобраны замерами, см.
+>>>>>>> worktree-siemens-nx10
 =======
 # NX опознаёт три WM по _NET_WM_NAME (Metacity, KWin, GNOME Shell). На
 # раскладку панелей это, как выяснилось, не влияет, но metacity — единственный
@@ -15,6 +21,7 @@ let
   dumpWindows = pkgs.writeShellApplication {
     name = "nx-dump-windows";
 <<<<<<< HEAD
+<<<<<<< HEAD
     runtimeInputs = with pkgs; [ xwininfo xprop xdpyinfo coreutils gnugrep ];
     text = ''
       out="''${1:-$HOME/nx-windows.txt}"
@@ -26,6 +33,8 @@ let
         # shellcheck source=/dev/null
         . "$session"
 =======
+=======
+>>>>>>> worktree-siemens-nx10
     runtimeInputs = with pkgs; [ xwininfo xprop xdpyinfo coreutils gnugrep gnused ];
     text = ''
       out="''${1:-''${XDG_RUNTIME_DIR:-/tmp}/nx-windows.txt}"
@@ -36,6 +45,9 @@ let
       if [ -z "''${DISPLAY:-}" ] && [ -r "$session" ]; then
         DISPLAY=$(sed -n 's/^DISPLAY=//p' "$session")
         XAUTHORITY=$(sed -n 's/^XAUTHORITY=//p' "$session")
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
         export DISPLAY XAUTHORITY
       fi
@@ -45,6 +57,7 @@ let
         exit 1
       fi
 
+<<<<<<< HEAD
 <<<<<<< HEAD
       {
         echo "=== дисплей $DISPLAY ==="
@@ -69,6 +82,8 @@ let
           xprop -id "$w" WM_NAME WM_CLASS WM_TRANSIENT_FOR WM_NORMAL_HINTS \
             _MOTIF_WM_HINTS _NET_WM_WINDOW_TYPE _NET_WM_STATE
 =======
+=======
+>>>>>>> worktree-siemens-nx10
       # Каждый фильтр с || true: пустой grep под errexit оборвал бы снимок на
       # середине — ровно в том случае, ради которого он и снимается.
       {
@@ -95,6 +110,9 @@ let
             | grep -E 'Absolute|Width:|Height:|Map State|Override|Gravity|Backing' || true
           xprop -id "$w" WM_NAME WM_CLASS WM_TRANSIENT_FOR WM_NORMAL_HINTS \
             _MOTIF_WM_HINTS _NET_WM_WINDOW_TYPE _NET_WM_STATE || true
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
           echo
         done
@@ -108,9 +126,15 @@ let
   # изменении размера, а тень добавляла к рамке 26 пикселей и разносила
   # раскладку NX. Борт по бокам и снизу — чтобы окно было за что ухватить.
 <<<<<<< HEAD
+<<<<<<< HEAD
   gtkCss = border: ''
     decoration, decoration:backdrop {
       margin: 0 ${border}px ${border}px ${border}px;
+=======
+  gtkCss = pkgs.writeText "nx-metacity.css" ''
+    decoration, decoration:backdrop {
+      margin: 0 @border@px @border@px @border@px;
+>>>>>>> worktree-siemens-nx10
 =======
   gtkCss = pkgs.writeText "nx-metacity.css" ''
     decoration, decoration:backdrop {
@@ -133,7 +157,11 @@ let
   '';
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   settings = pkgs.writeText "metacity-keyfile" ''
+=======
+  settings = pkgs.writeText "nx-metacity-keyfile" ''
+>>>>>>> worktree-siemens-nx10
 =======
   settings = pkgs.writeText "nx-metacity-keyfile" ''
 >>>>>>> worktree-siemens-nx10
@@ -142,6 +170,7 @@ let
     placement-mode='center'
   '';
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   session = pkgs.writeShellScript "nx-session" ''
     export XDG_DATA_DIRS="${pkgs.metacity}/share:${pkgs.gsettings-desktop-schemas}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
@@ -182,6 +211,8 @@ let
 in
 { inherit session dumpWindows; }
 =======
+=======
+>>>>>>> worktree-siemens-nx10
   session = pkgs.writeShellApplication {
     name = "nx-session";
     runtimeInputs = with pkgs; [ coreutils gnused gnugrep xprop xsetroot metacity ];
@@ -245,4 +276,7 @@ in
   inherit dumpWindows;
   session = "${session}/bin/nx-session";
 }
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10

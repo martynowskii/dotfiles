@@ -15,8 +15,13 @@ let
   ];
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   # Свободный номер дисплея и разовый cookie: -ac открыл бы вложенный сервер
   # любому локальному процессу.
+=======
+  # Задаёт display, runtime, authfile, server_pid и ставит ловушку уборки.
+  # Свой cookie вместо -ac: -ac открыл бы сервер любому локальному процессу.
+>>>>>>> worktree-siemens-nx10
 =======
   # Задаёт display, runtime, authfile, server_pid и ставит ловушку уборки.
   # Свой cookie вместо -ac: -ac открыл бы сервер любому локальному процессу.
@@ -40,10 +45,13 @@ let
 
     server_pid=""
 <<<<<<< HEAD
+<<<<<<< HEAD
     trap 'kill $server_pid 2>/dev/null || true; rm -rf "$runtime"' EXIT
   '';
 
 =======
+=======
+>>>>>>> worktree-siemens-nx10
     cleanup() {
       [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
       rm -rf "$runtime"
@@ -52,6 +60,9 @@ let
   '';
 
   # Читает server_pid и display, заданные выше.
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
   waitForDisplay = server: ''
     for _ in $(seq 1 100); do
@@ -69,8 +80,13 @@ let
   '';
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   # Логический размер выхода задаёт масштаб, физический — то, во что gamescope
   # увеличивает. Спрашиваем niri, чтобы не разъезжалось при смене масштаба.
+=======
+  # Задаёт logical и physical. Логический размер выхода определяет масштаб,
+  # физический — то, во что gamescope увеличивает.
+>>>>>>> worktree-siemens-nx10
 =======
   # Задаёт logical и physical. Логический размер выхода определяет масштаб,
   # физический — то, во что gamescope увеличивает.
@@ -80,11 +96,14 @@ let
     logical=$(printf '%s' "$out" | jq -r '.logical | "\(.width)x\(.height)"' 2>/dev/null || true)
     physical=$(printf '%s' "$out" | jq -r '.modes[.current_mode] | "\(.width)x\(.height)"' 2>/dev/null || true)
 <<<<<<< HEAD
+<<<<<<< HEAD
     case "$logical"  in [0-9]*x[0-9]*) ;; *) logical=1645x1028  ;; esac
     case "$physical" in [0-9]*x[0-9]*) ;; *) physical=2880x1800 ;; esac
   '';
 
 =======
+=======
+>>>>>>> worktree-siemens-nx10
     case "$logical" in
       [0-9]*x[0-9]*) ;;
       *) logical=1645x1028
@@ -101,6 +120,9 @@ let
     esac
   '';
 
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
   rootful = pkgs.writeShellApplication {
     name = "nx";
@@ -118,8 +140,12 @@ let
 
       # -fullscreen не спорит с -geometry: размер X-экрана остаётся наш.
 <<<<<<< HEAD
+<<<<<<< HEAD
       fullscreen=()
       [ "''${NX_FULLSCREEN:-1}" = 0 ] || fullscreen=(-fullscreen)
+=======
+      ${fullscreenFlag "-fullscreen"}
+>>>>>>> worktree-siemens-nx10
 =======
       ${fullscreenFlag "-fullscreen"}
 >>>>>>> worktree-siemens-nx10
@@ -130,7 +156,11 @@ let
         -auth "$authfile" \
         -geometry "$NX_GEOMETRY" \
 <<<<<<< HEAD
+<<<<<<< HEAD
         -fp ${fontPath} \
+=======
+        -fp "${fontPath}" \
+>>>>>>> worktree-siemens-nx10
 =======
         -fp "${fontPath}" \
 >>>>>>> worktree-siemens-nx10
@@ -143,6 +173,7 @@ let
     '';
   };
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   # Xephyr внутри gamescope обязателен: gamescope показывает только верхнее
   # окно, а у NX их много.
@@ -170,6 +201,8 @@ let
     name = "nx-gamescope";
     runtimeInputs = with pkgs; [ gamescope xorg-server xauth util-linux coreutils jq ];
 =======
+=======
+>>>>>>> worktree-siemens-nx10
   # Вторая половина запуска через gamescope: Xephyr внутри него обязателен,
   # потому что gamescope показывает только верхнее окно, а у NX их много.
   gamescopeInner = pkgs.writeShellApplication {
@@ -200,6 +233,9 @@ let
   gamescopeBin = pkgs.writeShellApplication {
     name = "nx-gamescope";
     runtimeInputs = with pkgs; [ gamescope xauth util-linux coreutils jq ];
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
     text = ''
       ${outputSize}
@@ -213,6 +249,7 @@ let
       : "''${NX_GS_FILTER:=fsr}"
 
 <<<<<<< HEAD
+<<<<<<< HEAD
       fullscreen=()
       [ "''${NX_FULLSCREEN:-1}" = 0 ] || fullscreen=(-f)
 
@@ -225,18 +262,24 @@ let
 
       exec gamescope \
 =======
+=======
+>>>>>>> worktree-siemens-nx10
       ${fullscreenFlag "-f"}
 
       ${startDisplay}
 
       # Без exec: он заменил бы процесс и ловушка уборки не сработала бы.
       gamescope \
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
         --backend wayland \
         -w "$NX_GS_WIDTH" -h "$NX_GS_HEIGHT" \
         -W "$NX_GS_OUT_WIDTH" -H "$NX_GS_OUT_HEIGHT" \
         -F "$NX_GS_FILTER" \
         "''${fullscreen[@]}" \
+<<<<<<< HEAD
 <<<<<<< HEAD
         -- ${gamescopeInner} "$@"
     '';
@@ -251,11 +294,16 @@ let
   '';
 
 =======
+=======
+>>>>>>> worktree-siemens-nx10
         -- ${gamescopeInner}/bin/nx-gamescope-inner \
            "$display" "$authfile" "''${NX_GS_WIDTH}x''${NX_GS_HEIGHT}" "$@"
     '';
   };
 
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
   gamescopeDesktop = pkgs.makeDesktopItem {
     name = "siemens-nx-gamescope";
@@ -263,13 +311,19 @@ let
     comment = "NX через gamescope: увеличение по FSR вместо растягивания композитором";
     exec = "nx-gamescope %f";
 <<<<<<< HEAD
+<<<<<<< HEAD
     icon = "siemens-nx-gamescope";
     # Одна основная категория, иначе пункт появится в меню дважды.
 =======
+=======
+>>>>>>> worktree-siemens-nx10
     # Имя из темы значков, чтобы не тащить копию файла из adwaita.
     icon = "video-display";
     # Graphics основная, Engineering дополнительная. Двух основных нельзя:
     # пункт задвоится в меню.
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
     categories = [ "Graphics" "Engineering" ];
     terminal = false;
@@ -281,7 +335,11 @@ in
   gamescope = pkgs.symlinkJoin {
     name = "nx-gamescope";
 <<<<<<< HEAD
+<<<<<<< HEAD
     paths = [ gamescopeBin gamescopeDesktop gamescopeIcon ];
+=======
+    paths = [ gamescopeBin gamescopeDesktop ];
+>>>>>>> worktree-siemens-nx10
 =======
     paths = [ gamescopeBin gamescopeDesktop ];
 >>>>>>> worktree-siemens-nx10

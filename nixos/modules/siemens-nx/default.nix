@@ -1,9 +1,15 @@
 # Siemens NX 10: сервер лицензий, сам NX и две команды запуска.
 #
 <<<<<<< HEAD
+<<<<<<< HEAD
 # Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens — рядом с ними
 # ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
 { lib, pkgs, ... }:
+=======
+# Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens-tmp — рядом с ними
+# ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
+{ config, lib, pkgs, ... }:
+>>>>>>> worktree-siemens-nx10
 =======
 # Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens-tmp — рядом с ними
 # ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
@@ -16,7 +22,11 @@ let
 
   nx = pkgs.callPackage (siemensDir + "/nix-nx") {
 <<<<<<< HEAD
+<<<<<<< HEAD
     licenseServer = "28000@localhost";
+=======
+    licenseServer = "${toString config.services.splmLicenseServer.port}@localhost";
+>>>>>>> worktree-siemens-nx10
 =======
     licenseServer = "${toString config.services.splmLicenseServer.port}@localhost";
 >>>>>>> worktree-siemens-nx10
@@ -37,10 +47,13 @@ in
 
   environment.systemPackages = [
 <<<<<<< HEAD
+<<<<<<< HEAD
     # Дерево NX, ярлык и иконка. Команду nx из него перекрываем обёрткой.
     nx
     (lib.hiPrio launchers.rootful)
 =======
+=======
+>>>>>>> worktree-siemens-nx10
     # Из пакета берём только ярлык и иконку: команду nx даёт обёртка, а два
     # bin/nx в одном профиле пришлось бы разводить приоритетами.
     (pkgs.buildEnv {
@@ -50,6 +63,9 @@ in
     })
 
     launchers.rootful
+<<<<<<< HEAD
+>>>>>>> worktree-siemens-nx10
+=======
 >>>>>>> worktree-siemens-nx10
     launchers.gamescope
     dumpWindows
