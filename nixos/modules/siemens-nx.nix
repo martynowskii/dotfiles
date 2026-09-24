@@ -29,6 +29,73 @@ let
     "${pkgs.font-misc-misc}/share/fonts/X11/misc"
   ];
 
+  # Снимок дерева окон вложенного сервера. Нужен, чтобы разбираться с
+  # панелями NX по фактам: видно, чем окно себя объявило (WM_CLASS,
+  # _NET_WM_WINDOW_TYPE, _MOTIF_WM_HINTS, WM_TRANSIENT_FOR) и что с ним
+  # сделал менеджер.
+  #
+  # Запускается двумя способами: сам, когда NX стартовал с NX_DEBUG=1, или
+  # руками из другого терминала — тогда дисплей и cookie берутся из файла,
+  # который пишет nx-session.
+  nx-dump-windows = pkgs.writeShellApplication {
+    name = "nx-dump-windows";
+    runtimeInputs = with pkgs; [
+      xwininfo
+      xprop
+      xdpyinfo
+      coreutils
+      gnugrep
+    ];
+    text = ''
+      out="''${1:-$HOME/nx-windows.txt}"
+      session_file="''${XDG_RUNTIME_DIR:-/tmp}/nx-session.env"
+
+      # NX_IN_SESSION выставлен, когда нас позвал сам nx-session: там DISPLAY
+      # и XAUTHORITY уже верные, читать файл незачем.
+      if [ -z "''${NX_IN_SESSION:-}" ] && [ -r "$session_file" ]; then
+        # shellcheck source=/dev/null
+        . "$session_file"
+        export DISPLAY XAUTHORITY
+      fi
+
+      if [ -z "''${DISPLAY:-}" ]; then
+        echo "nx-dump-windows: не знаю, какой дисплей смотреть." >&2
+        echo "  Похоже, NX сейчас не запущен: нет $session_file." >&2
+        exit 1
+      fi
+
+      {
+        echo "=== дисплей $DISPLAY ==="
+        xdpyinfo | grep -E 'name of display|version number|dimensions|resolution|depth of root'
+
+        echo
+        echo "=== менеджер окон ==="
+        xprop -root _NET_SUPPORTING_WM_CHECK _NET_SUPPORTED
+        wm=$(xprop -root _NET_SUPPORTING_WM_CHECK | grep -o '0x[0-9a-f]*' | head -1)
+        if [ -n "$wm" ]; then
+          xprop -id "$wm" _NET_WM_NAME
+        fi
+
+        echo
+        echo "=== дерево окон ==="
+        xwininfo -root -tree
+
+        echo
+        echo "=== окна верхнего уровня ==="
+        for w in $(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*'); do
+          echo "--- $w ---"
+          xwininfo -id "$w" | grep -E 'Absolute|Width:|Height:|Map State|Override'
+          xprop -id "$w" \
+            WM_NAME WM_CLASS WM_TRANSIENT_FOR WM_NORMAL_HINTS \
+            _MOTIF_WM_HINTS _NET_WM_WINDOW_TYPE _NET_WM_STATE
+          echo
+        done
+      } > "$out" 2>&1
+
+      echo "nx-dump-windows: записано в $out" >&2
+    '';
+  };
+
   # Общая часть обоих вариантов: на уже поднятом DISPLAY запустить оконный
   # менеджер и отдать ему NX.
   #
@@ -45,9 +112,31 @@ let
     # стартует вовсе.
     export XDG_DATA_DIRS="${pkgs.metacity}/share:${pkgs.gsettings-desktop-schemas}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
+    # Куда смотреть снаружи. Дисплей у нас каждый раз новый, а cookie лежит
+    # во временном каталоге, так что без этой записки к вложенному серверу из
+    # другого терминала не подключиться — ни nx-dump-windows, ни чем-то ещё.
+    session_file="''${XDG_RUNTIME_DIR:-/tmp}/nx-session.env"
+    printf 'DISPLAY=%s\nXAUTHORITY=%s\n' "$DISPLAY" "''${XAUTHORITY:-}" > "$session_file"
+
     ${pkgs.metacity}/bin/metacity &
     metacity_pid=$!
-    trap 'kill "$metacity_pid" 2>/dev/null || true' EXIT
+
+    # NX_DEBUG=1 — снять дерево окон, когда интерфейс уже сложился. Задержка
+    # по умолчанию с запасом: NX стартует долго, а снимок в середине запуска
+    # показывает недостроенный интерфейс и только путает.
+    debug_pid=""
+    if [ -n "''${NX_DEBUG:-}" ]; then
+      (
+        sleep "''${NX_DEBUG_DELAY:-90}"
+        NX_IN_SESSION=1 ${nx-dump-windows}/bin/nx-dump-windows \
+          "''${NX_DEBUG_FILE:-$HOME/nx-windows.txt}"
+      ) &
+      debug_pid=$!
+    fi
+
+    # Ждущий снимок убиваем тоже: если закрыть NX раньше срока, он проснётся
+    # над уже мёртвым дисплеем и запишет вместо дерева окон ошибку.
+    trap 'kill "$metacity_pid" ''${debug_pid:+"$debug_pid"} 2>/dev/null || true; rm -f "$session_file"' EXIT
 
     # Без exec: иначе потеряется trap и metacity останется висеть.
     ${nx}/bin/nx "$@"
@@ -189,7 +278,7 @@ let
   # Отсюда два вложенных сервера — плата за апскейлер.
   #
   # Требует Vulkan.
-  nx-gamescope = pkgs.writeShellApplication {
+  nx-gamescope-bin = pkgs.writeShellApplication {
     name = "nx-gamescope";
     runtimeInputs = with pkgs; [ gamescope xorg-server xauth util-linux coreutils ];
     text = ''
@@ -204,6 +293,11 @@ let
       # Апскейлер: linear, nearest, fsr, nis, pixel. FSR заточен ровно под
       # этот случай — увеличить готовую картинку и не размылить её.
       : "''${NX_GS_FILTER:=fsr}"
+
+      # Внутренний скрипт — отдельный процесс, и живёт он с set -u. Без
+      # export он падает на первой же строке с unbound variable, а не
+      # запускает Xephyr.
+      export NX_GS_WIDTH NX_GS_HEIGHT
 
       ${displaySetup}
 
@@ -228,6 +322,32 @@ let
         -f \
         -- ${nx-gamescope-inner} "$@"
     '';
+  };
+
+  # Своя иконка, чтобы пункт в лаунчере не путался с основным. У gamescope
+  # иконки нет вовсе, так что берём монитор из Adwaita — по смыслу это как
+  # раз про вывод и масштаб.
+  nx-gamescope-icon = pkgs.runCommand "nx-gamescope-icon" { } ''
+    install -Dm644 \
+      ${pkgs.adwaita-icon-theme}/share/icons/Adwaita/scalable/devices/video-display.svg \
+      "$out/share/pixmaps/siemens-nx-gamescope.svg"
+  '';
+
+  nx-gamescope-desktop = pkgs.makeDesktopItem {
+    name = "siemens-nx-gamescope";
+    desktopName = "Siemens NX 10.0.3 (gamescope)";
+    comment = "NX через gamescope: увеличение по FSR вместо растягивания композитором";
+    exec = "nx-gamescope %f";
+    icon = "siemens-nx-gamescope";
+    # Ровно одна основная категория: с двумя (Graphics и Science, как у
+    # пункта самого пакета) меню показало бы запуск дважды.
+    categories = [ "Graphics" "Engineering" ];
+    terminal = false;
+  };
+
+  nx-gamescope = pkgs.symlinkJoin {
+    name = "nx-gamescope";
+    paths = [ nx-gamescope-bin nx-gamescope-desktop nx-gamescope-icon ];
   };
 in
 {
@@ -254,8 +374,11 @@ in
     # берётся оттуда, поэтому пункт в меню по-прежнему один и зовёт `nx`.
     (lib.hiPrio nx-rootful)
 
-    # Вариант 3 — отдельная команда, своего ярлыка намеренно нет: два
-    # одинаковых пункта в лаунчере только путают.
+    # Вариант 3 — отдельная команда со своим пунктом в лаунчере и своей
+    # иконкой, чтобы два запуска не путались.
     nx-gamescope
+
+    # Снимок дерева окон запущенного NX — для разбирательств с панелями.
+    nx-dump-windows
   ];
 }
