@@ -2,14 +2,14 @@
 #
 # Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens — рядом с ними
 # ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   # Именно path, а не строка: "${siemensDir}" утащил бы носитель в /nix/store.
   siemensDir = /home/arthr/Documents/univer/Siemens;
 
   nx = pkgs.callPackage (siemensDir + "/nix-nx") {
-    licenseServer = "28000@localhost";
+    licenseServer = "${toString config.services.splmLicenseServer.port}@localhost";
   };
 
   inherit (import ./session.nix { inherit pkgs nx; }) session dumpWindows;
@@ -26,9 +26,15 @@ in
   };
 
   environment.systemPackages = [
-    # Дерево NX, ярлык и иконка. Команду nx из него перекрываем обёрткой.
-    nx
-    (lib.hiPrio launchers.rootful)
+    # Из пакета берём только ярлык и иконку: команду nx даёт обёртка, а два
+    # bin/nx в одном профиле пришлось бы разводить приоритетами.
+    (pkgs.buildEnv {
+      name = "siemens-nx-share";
+      paths = [ nx ];
+      pathsToLink = [ "/share" ];
+    })
+
+    launchers.rootful
     launchers.gamescope
     dumpWindows
   ];

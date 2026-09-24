@@ -14,8 +14,8 @@ let
     "${pkgs.font-misc-misc}/share/fonts/X11/misc"
   ];
 
-  # Свободный номер дисплея и разовый cookie: -ac открыл бы вложенный сервер
-  # любому локальному процессу.
+  # Задаёт display, runtime, authfile, server_pid и ставит ловушку уборки.
+  # Свой cookie вместо -ac: -ac открыл бы сервер любому локальному процессу.
   startDisplay = ''
     display=""
     for n in $(seq 10 40); do
@@ -34,9 +34,14 @@ let
     xauth -q -f "$authfile" add ":$display" MIT-MAGIC-COOKIE-1 "$(mcookie)"
 
     server_pid=""
-    trap 'kill $server_pid 2>/dev/null || true; rm -rf "$runtime"' EXIT
+    cleanup() {
+      [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
+      rm -rf "$runtime"
+    }
+    trap cleanup EXIT INT TERM HUP
   '';
 
+  # Читает server_pid и display, заданные выше.
   waitForDisplay = server: ''
     for _ in $(seq 1 100); do
       if ! kill -0 "$server_pid" 2>/dev/null; then
@@ -52,14 +57,26 @@ let
     fi
   '';
 
-  # Логический размер выхода задаёт масштаб, физический — то, во что gamescope
-  # увеличивает. Спрашиваем niri, чтобы не разъезжалось при смене масштаба.
+  # Задаёт logical и physical. Логический размер выхода определяет масштаб,
+  # физический — то, во что gamescope увеличивает.
   outputSize = ''
     out=$(niri msg --json focused-output 2>/dev/null || true)
     logical=$(printf '%s' "$out" | jq -r '.logical | "\(.width)x\(.height)"' 2>/dev/null || true)
     physical=$(printf '%s' "$out" | jq -r '.modes[.current_mode] | "\(.width)x\(.height)"' 2>/dev/null || true)
-    case "$logical"  in [0-9]*x[0-9]*) ;; *) logical=1645x1028  ;; esac
+    case "$logical" in
+      [0-9]*x[0-9]*) ;;
+      *) logical=1645x1028
+         echo "nx: niri не ответил, беру размер выхода $logical" >&2 ;;
+    esac
     case "$physical" in [0-9]*x[0-9]*) ;; *) physical=2880x1800 ;; esac
+  '';
+
+  # Выключает полный экран не только на 0, но и на привычные false/no/off.
+  fullscreenFlag = flag: ''
+    case "''${NX_FULLSCREEN:-1}" in
+      0 | no | false | off) fullscreen=() ;;
+      *) fullscreen=(${flag}) ;;
+    esac
   '';
 
   rootful = pkgs.writeShellApplication {
@@ -77,15 +94,14 @@ let
       : "''${NX_GEOMETRY:=$logical}"
 
       # -fullscreen не спорит с -geometry: размер X-экрана остаётся наш.
-      fullscreen=()
-      [ "''${NX_FULLSCREEN:-1}" = 0 ] || fullscreen=(-fullscreen)
+      ${fullscreenFlag "-fullscreen"}
 
       ${startDisplay}
 
       Xwayland ":$display" \
         -auth "$authfile" \
         -geometry "$NX_GEOMETRY" \
-        -fp ${fontPath} \
+        -fp "${fontPath}" \
         "''${fullscreen[@]}" &
       server_pid=$!
 
@@ -95,31 +111,36 @@ let
     '';
   };
 
-  # Xephyr внутри gamescope обязателен: gamescope показывает только верхнее
-  # окно, а у NX их много.
-  gamescopeInner = pkgs.writeShellScript "nx-gamescope-inner" ''
-    set -euo pipefail
-    display="$NX_GS_DISPLAY"
-    authfile="$NX_GS_AUTH"
+  # Вторая половина запуска через gamescope: Xephyr внутри него обязателен,
+  # потому что gamescope показывает только верхнее окно, а у NX их много.
+  gamescopeInner = pkgs.writeShellApplication {
+    name = "nx-gamescope-inner";
+    runtimeInputs = with pkgs; [ coreutils ];
+    text = ''
+      display="$1"
+      authfile="$2"
+      screen="$3"
+      shift 3
 
-    # -no-host-grab обязателен: NX делает активный grab для меню, иначе ввод
-    # всей системы уйдёт ему.
-    ${pkgs.xorg-server}/bin/Xephyr ":$display" \
-      -auth "$authfile" \
-      -screen "''${NX_GS_WIDTH}x''${NX_GS_HEIGHT}" \
-      -fp ${fontPath} \
-      -resizeable -no-host-grab &
-    server_pid=$!
-    trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+      # -no-host-grab обязателен: NX делает активный grab для меню, иначе ввод
+      # всей системы уйдёт ему.
+      ${pkgs.xorg-server}/bin/Xephyr ":$display" \
+        -auth "$authfile" \
+        -screen "$screen" \
+        -fp "${fontPath}" \
+        -resizeable -no-host-grab &
+      server_pid=$!
+      trap 'kill "$server_pid" 2>/dev/null || true' EXIT INT TERM HUP
 
-    ${waitForDisplay "Xephyr"}
+      ${waitForDisplay "Xephyr"}
 
-    DISPLAY=":$display" XAUTHORITY="$authfile" ${session} "$@"
-  '';
+      DISPLAY=":$display" XAUTHORITY="$authfile" ${session} "$@"
+    '';
+  };
 
   gamescopeBin = pkgs.writeShellApplication {
     name = "nx-gamescope";
-    runtimeInputs = with pkgs; [ gamescope xorg-server xauth util-linux coreutils jq ];
+    runtimeInputs = with pkgs; [ gamescope xauth util-linux coreutils jq ];
     text = ''
       ${outputSize}
 
@@ -131,41 +152,31 @@ let
       # Апскейлер: linear, nearest, fsr, nis, pixel.
       : "''${NX_GS_FILTER:=fsr}"
 
-      fullscreen=()
-      [ "''${NX_FULLSCREEN:-1}" = 0 ] || fullscreen=(-f)
+      ${fullscreenFlag "-f"}
 
       ${startDisplay}
 
-      # Внутренний скрипт — отдельный процесс с set -u, поэтому именно export.
-      export NX_GS_WIDTH NX_GS_HEIGHT
-      export NX_GS_DISPLAY="$display"
-      export NX_GS_AUTH="$authfile"
-
-      exec gamescope \
+      # Без exec: он заменил бы процесс и ловушка уборки не сработала бы.
+      gamescope \
         --backend wayland \
         -w "$NX_GS_WIDTH" -h "$NX_GS_HEIGHT" \
         -W "$NX_GS_OUT_WIDTH" -H "$NX_GS_OUT_HEIGHT" \
         -F "$NX_GS_FILTER" \
         "''${fullscreen[@]}" \
-        -- ${gamescopeInner} "$@"
+        -- ${gamescopeInner}/bin/nx-gamescope-inner \
+           "$display" "$authfile" "''${NX_GS_WIDTH}x''${NX_GS_HEIGHT}" "$@"
     '';
   };
-
-  # Своя иконка, чтобы два пункта в лаунчере не путались. У gamescope иконки
-  # нет, берём монитор из Adwaita.
-  gamescopeIcon = pkgs.runCommand "nx-gamescope-icon" { } ''
-    install -Dm444 \
-      ${pkgs.adwaita-icon-theme}/share/icons/Adwaita/scalable/devices/video-display.svg \
-      "$out/share/pixmaps/siemens-nx-gamescope.svg"
-  '';
 
   gamescopeDesktop = pkgs.makeDesktopItem {
     name = "siemens-nx-gamescope";
     desktopName = "Siemens NX 10.0.3 (gamescope)";
     comment = "NX через gamescope: увеличение по FSR вместо растягивания композитором";
     exec = "nx-gamescope %f";
-    icon = "siemens-nx-gamescope";
-    # Одна основная категория, иначе пункт появится в меню дважды.
+    # Имя из темы значков, чтобы не тащить копию файла из adwaita.
+    icon = "video-display";
+    # Graphics основная, Engineering дополнительная. Двух основных нельзя:
+    # пункт задвоится в меню.
     categories = [ "Graphics" "Engineering" ];
     terminal = false;
   };
@@ -175,6 +186,6 @@ in
 
   gamescope = pkgs.symlinkJoin {
     name = "nx-gamescope";
-    paths = [ gamescopeBin gamescopeDesktop gamescopeIcon ];
+    paths = [ gamescopeBin gamescopeDesktop ];
   };
 }
