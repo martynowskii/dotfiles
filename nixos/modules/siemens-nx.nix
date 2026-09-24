@@ -126,11 +126,64 @@ let
     # Высоту заголовка так не уменьшить — её задаёт тема GTK, и ни
     # titlebar-font, ни font-name на неё не влияют (проверено).
     metacity_cfg=$(mktemp -d)
-    mkdir -p "$metacity_cfg/glib-2.0/settings"
+    mkdir -p "$metacity_cfg/glib-2.0/settings" "$metacity_cfg/gtk-3.0"
     cat > "$metacity_cfg/glib-2.0/settings/keyfile" <<'EOF'
 [org/gnome/metacity]
 compositor='none'
 EOF
+
+    # Заголовок окна metacity 3.x рисует темой GTK, поэтому его высота
+    # правится обычным пользовательским gtk.css — и, раз XDG_CONFIG_HOME у
+    # нас подменён только для metacity, файл увидит тоже только он.
+    #
+    # Смысл тот же, что у выключенного композитора: NX кладёт свои окна
+    # внутрь главного, не делая поправки на рамку, так что каждый лишний
+    # пиксель рамки — это пиксель, на который окно уезжает. Замер на
+    # xclock 300x200:
+    #
+    #   как есть           заголовок 42
+    #   этот gtk.css       заголовок 21
+    #
+    # 21 — жёсткий пол: обнуление шрифта, кнопок и отступов ниже не опускает,
+    # у темы GTK внутри свой минимум. Совсем без заголовка можно только через
+    # старую тему metacity-theme-3.xml с has_title="false", но тогда у
+    # плавающих панелей пропадут крестик и возможность двигать их мышью.
+    # На RHEL у NX заголовки были примерно такие же, около 20.
+    #
+    # NX_TITLEBARS=normal — вернуть штатные 42, если правка когда-нибудь
+    # разойдётся с очередной версией GTK.
+    if [ "''${NX_TITLEBARS:-thin}" != normal ]; then
+      cat > "$metacity_cfg/gtk-3.0/gtk.css" <<'EOF'
+.titlebar, headerbar,
+.titlebar.default-decoration, headerbar.default-decoration {
+  min-height: 0;
+  padding: 0 2px;
+  border-width: 0;
+}
+
+.titlebar label.title, headerbar label.title {
+  font-size: 9px;
+  padding: 0;
+  margin: 0;
+}
+
+.titlebar button.titlebutton, headerbar button.titlebutton {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border-width: 0;
+}
+
+.titlebar button.titlebutton image, headerbar button.titlebutton image {
+  -gtk-icon-size: 12px;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+}
+EOF
+    fi
 
     # Куда смотреть снаружи. Дисплей у нас каждый раз новый, а cookie лежит
     # во временном каталоге, так что без этой записки к вложенному серверу из
