@@ -1,7 +1,7 @@
 # Siemens NX 10: сервер лицензий, сам NX и две команды запуска.
 #
 # Пакеты лежат вне репозитория, в ~/Documents/univer/Siemens — рядом с ними
-# ~13 ГБ носителя. Зачем NX вообще нужна прослойка — siemens-nx-display.md.
+# ~13 ГБ носителя. Зачем NX вообще нужна прослойка — README.md.
 { lib, pkgs, ... }:
 
 let
@@ -12,8 +12,8 @@ let
     licenseServer = "28000@localhost";
   };
 
-  inherit (import ./siemens-nx-session.nix { inherit pkgs nx; }) session dumpWindows;
-  launchers = import ./siemens-nx-launchers.nix { inherit lib pkgs nx session; };
+  inherit (import ./session.nix { inherit pkgs nx; }) session dumpWindows;
+  launchers = import ./launchers.nix { inherit lib pkgs nx session; };
 in
 {
   imports = [ (siemensDir + "/nix-license-server/license-server-module.nix") ];

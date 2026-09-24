@@ -2,7 +2,7 @@
 #
 # Metacity не вкусовщина — NX сверяет _NET_WM_NAME со списком из трёх имён,
 # зашитым в libugii.so. Настройки его рамок подобраны замерами, см.
-# siemens-nx-display.md.
+# README.md.
 { pkgs, nx }:
 
 let

@@ -2,7 +2,7 @@
 #
 # rootful Xwayland — основной: его масштабирует сам niri, поэтому лишнего слоя
 # не нужно. gamescope — запасной, ради апскейлера FSR. Почему так, а не иначе,
-# разобрано в siemens-nx-display.md.
+# разобрано в README.md.
 { lib, pkgs, nx, session }:
 
 let
