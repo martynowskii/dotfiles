@@ -14,6 +14,7 @@
       ./modules/machine.nix
       ./modules/network.nix
       ./modules/portals.nix
+      ./modules/siemens-nx
       ./modules/system.nix
     ];
 
