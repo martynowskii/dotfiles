@@ -242,6 +242,28 @@ EOF
     xauth -f "$authfile" add ":$display" MIT-MAGIC-COOKIE-1 "$(mcookie)"
   '';
 
+  # Размеры активного выхода. Нужны обоим вариантам, и по-разному: логический
+  # задаёт масштаб (в нём рисует NX), физический — то, во что картинку
+  # увеличивают.
+  #
+  # Спрашиваем niri, а не вбиваем числа: иначе при смене масштаба или
+  # подключении монитора полноэкранное окно перестанет совпадать с экраном и
+  # по краям появятся поля. Запасные значения — под текущий ноутбук, на
+  # случай если niri нет или он промолчал.
+  outputQuery = ''
+    nx_logical=""
+    nx_physical=""
+    if command -v niri >/dev/null 2>&1; then
+      nx_out=$(niri msg --json focused-output 2>/dev/null || true)
+      if [ -n "$nx_out" ]; then
+        nx_logical=$(printf '%s' "$nx_out" | jq -r '.logical | "\(.width)x\(.height)"' 2>/dev/null || true)
+        nx_physical=$(printf '%s' "$nx_out" | jq -r '.modes[.current_mode] | "\(.width)x\(.height)"' 2>/dev/null || true)
+      fi
+    fi
+    case "$nx_logical" in [0-9]*x[0-9]*) ;; *) nx_logical=1645x1028 ;; esac
+    case "$nx_physical" in [0-9]*x[0-9]*) ;; *) nx_physical=2880x1800 ;; esac
+  '';
+
   # Ожидание сокета: оконный менеджер, запущенный раньше сервера, просто не
   # подключится.
   waitForDisplay = serverName: ''
@@ -274,16 +296,35 @@ EOF
   # логический размер выхода, niri растянет его до физического.
   nx-rootful = pkgs.writeShellApplication {
     name = "nx";
-    runtimeInputs = with pkgs; [ xwayland xauth util-linux coreutils ];
+    runtimeInputs = with pkgs; [ xwayland xauth util-linux coreutils jq ];
     text = ''
       # NX_NESTED=0 — запуск напрямую, в X-сервере хозяйской сессии. Панели
       # при этом разъедутся, зато видно поведение без прослойки.
       : "''${NX_NESTED:=1}"
 
-      # Логический размер выхода niri (2880x1800 при масштабе 1.75).
-      # Уменьшить это число — картинка станет крупнее и мыльнее, увеличить —
-      # мельче и чётче. 2880x1800 даст масштаб 1:1 без увеличения.
-      : "''${NX_GEOMETRY:=1645x1028}"
+      ${outputQuery}
+
+      # Логический размер выхода. Уменьшить это число — картинка станет
+      # крупнее и мыльнее, увеличить — мельче и чётче; поставить физический
+      # размер экрана значит отказаться от увеличения вовсе.
+      #
+      # По умолчанию берём ровно логический размер выхода: тогда развёрнутое
+      # на полный экран окно совпадает с экраном пиксель в пиксель, без полей
+      # и без повторного растягивания.
+      : "''${NX_GEOMETRY:=$nx_logical}"
+
+      # Полный экран. Проверено, что -fullscreen не спорит с -geometry:
+      # размер X-экрана остаётся наш, а композитор лишь разворачивает окно.
+      #   только -geometry 800x600         → X-экран 800x600
+      #   только -fullscreen               → X-экран 640x480 (размер по умолчанию)
+      #   -fullscreen + -geometry 800x600  → X-экран 800x600
+      # NX_FULLSCREEN=0 — оставить обычным окном.
+      : "''${NX_FULLSCREEN:=1}"
+      if [ "$NX_FULLSCREEN" = 0 ]; then
+        fullscreen_arg=""
+      else
+        fullscreen_arg="-fullscreen"
+      fi
 
       # -host-grab здесь намеренно НЕ передаётся: он отключил бы горячие
       # клавиши хозяйской сессии. NX делает активный grab для меню, и отдавать
@@ -306,6 +347,7 @@ EOF
       Xwayland ":$display" \
         -auth "$authfile" \
         -geometry "$NX_GEOMETRY" \
+        $fullscreen_arg \
         -fp ${fontPath} \
         $NX_XWAYLAND_ARGS &
       server_pid=$!
@@ -357,15 +399,26 @@ EOF
   # Требует Vulkan.
   nx-gamescope-bin = pkgs.writeShellApplication {
     name = "nx-gamescope";
-    runtimeInputs = with pkgs; [ gamescope xorg-server xauth util-linux coreutils ];
+    runtimeInputs = with pkgs; [ gamescope xorg-server xauth util-linux coreutils jq ];
     text = ''
-      # Внутреннее разрешение — в нём рисует NX.
-      : "''${NX_GS_WIDTH:=1645}"
-      : "''${NX_GS_HEIGHT:=1028}"
+      ${outputQuery}
+
+      # Внутреннее разрешение — в нём рисует NX. По умолчанию логический
+      # размер выхода.
+      : "''${NX_GS_WIDTH:=''${nx_logical%x*}}"
+      : "''${NX_GS_HEIGHT:=''${nx_logical#*x}}"
 
       # Выходное — физическое разрешение панели.
-      : "''${NX_GS_OUT_WIDTH:=2880}"
-      : "''${NX_GS_OUT_HEIGHT:=1800}"
+      : "''${NX_GS_OUT_WIDTH:=''${nx_physical%x*}}"
+      : "''${NX_GS_OUT_HEIGHT:=''${nx_physical#*x}}"
+
+      # Полный экран — как и у варианта 1. NX_FULLSCREEN=0 оставит окном.
+      : "''${NX_FULLSCREEN:=1}"
+      if [ "$NX_FULLSCREEN" = 0 ]; then
+        fullscreen_arg=""
+      else
+        fullscreen_arg="-f"
+      fi
 
       # Апскейлер: linear, nearest, fsr, nis, pixel. FSR заточен ровно под
       # этот случай — увеличить готовую картинку и не размылить её.
@@ -391,12 +444,13 @@ EOF
       export NX_GS_DISPLAY="$display"
       export NX_GS_AUTH="$authfile"
 
+      # shellcheck disable=SC2086
       exec gamescope \
         --backend wayland \
         -w "$NX_GS_WIDTH" -h "$NX_GS_HEIGHT" \
         -W "$NX_GS_OUT_WIDTH" -H "$NX_GS_OUT_HEIGHT" \
         -F "$NX_GS_FILTER" \
-        -f \
+        $fullscreen_arg \
         -- ${nx-gamescope-inner} "$@"
     '';
   };
