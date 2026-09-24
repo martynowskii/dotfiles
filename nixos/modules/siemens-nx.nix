@@ -176,7 +176,7 @@ let
         echo "=== окна верхнего уровня ==="
         for w in $(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*'); do
           echo "--- $w ---"
-          xwininfo -id "$w" | grep -E 'Absolute|Width:|Height:|Map State|Override'
+          xwininfo -all -id "$w" | grep -E 'Absolute|Width:|Height:|Map State|Override|Gravity|Backing'
           xprop -id "$w" \
             WM_NAME WM_CLASS WM_TRANSIENT_FOR WM_NORMAL_HINTS \
             _MOTIF_WM_HINTS _NET_WM_WINDOW_TYPE _NET_WM_STATE
