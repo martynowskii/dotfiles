@@ -49,36 +49,76 @@ let
   # колонок, стал бы неотличим от обычного. А Liberation Sans вдобавок
   # метрически совместим с Helvetica — ровно с тем, что NX и просит, так что
   # зашитые в интерфейс ширины сходятся лучше всего.
-  nx-fonts = pkgs.runCommand "nx-fonts" { } ''
-    dir="$out/share/fonts/nx"
-    mkdir -p "$dir"
-    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationSans-Regular.ttf "$dir/"
-    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationSans-Bold.ttf    "$dir/"
-    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationMono-Regular.ttf "$dir/"
-    ln -s ${pkgs.liberation_ttf}/share/fonts/truetype/LiberationMono-Bold.ttf    "$dir/"
+  mkNxFonts = { name, sans, sansBold, mono, monoBold }:
+    pkgs.runCommand "nx-fonts-${name}" { } ''
+      dir="$out/share/fonts/nx"
+      mkdir -p "$dir"
+      ln -s ${sans}     "$dir/sans.ttf"
+      ln -s ${sansBold} "$dir/sans-bold.ttf"
+      ln -s ${mono}     "$dir/mono.ttf"
+      ln -s ${monoBold} "$dir/mono-bold.ttf"
 
-    # Нули в числовых полях — признак масштабируемого шрифта: под них сервер
-    # подставит любой запрошенный размер.
-    cat > "$dir/fonts.dir" <<'EOF'
-    4
-    LiberationMono-Bold.ttf -adobe-courier-bold-r-normal--0-0-0-0-m-0-iso8859-1
-    LiberationMono-Regular.ttf -adobe-courier-medium-r-normal--0-0-0-0-m-0-iso8859-1
-    LiberationSans-Bold.ttf -adobe-helvetica-bold-r-normal--0-0-0-0-p-0-iso8859-1
-    LiberationSans-Regular.ttf -adobe-helvetica-medium-r-normal--0-0-0-0-p-0-iso8859-1
-    EOF
-    sed -i 's/^    //' "$dir/fonts.dir"
-  '';
+      # Нули в числовых полях — признак масштабируемого шрифта: под них
+      # сервер подставит любой запрошенный размер.
+      cat > "$dir/fonts.dir" <<'EOF'
+      4
+      mono-bold.ttf -adobe-courier-bold-r-normal--0-0-0-0-m-0-iso8859-1
+      mono.ttf -adobe-courier-medium-r-normal--0-0-0-0-m-0-iso8859-1
+      sans-bold.ttf -adobe-helvetica-bold-r-normal--0-0-0-0-p-0-iso8859-1
+      sans.ttf -adobe-helvetica-medium-r-normal--0-0-0-0-p-0-iso8859-1
+      EOF
+      sed -i 's/^      //' "$dir/fonts.dir"
+    '';
 
-  fontPathModern = "${nx-fonts}/share/fonts/nx,${fontPathOriginal}";
+  liberation = "${pkgs.liberation_ttf}/share/fonts/truetype";
+  dejavu = "${pkgs.dejavu_fonts}/share/fonts/truetype";
+  noto = "${pkgs.noto-fonts}/share/fonts/noto";
+
+  nxFontSets = {
+    # Метрически совместим с Helvetica — ровно с тем, что NX и просит, так
+    # что зашитые в интерфейс ширины сходятся лучше всего. Оборотная
+    # сторона: и выглядит он почти как Helvetica, разница малозаметна.
+    liberation = mkNxFonts {
+      name = "liberation";
+      sans = "${liberation}/LiberationSans-Regular.ttf";
+      sansBold = "${liberation}/LiberationSans-Bold.ttf";
+      mono = "${liberation}/LiberationMono-Regular.ttf";
+      monoBold = "${liberation}/LiberationMono-Bold.ttf";
+    };
+
+    # Заметно шире и с большей высотой строчных — разницу видно сразу.
+    # Годится и как проверка, что подмена вообще доходит до NX.
+    dejavu = mkNxFonts {
+      name = "dejavu";
+      sans = "${dejavu}/DejaVuSans.ttf";
+      sansBold = "${dejavu}/DejaVuSans-Bold.ttf";
+      mono = "${dejavu}/DejaVuSansMono.ttf";
+      monoBold = "${dejavu}/DejaVuSansMono-Bold.ttf";
+    };
+
+    # Системный по умолчанию. С оговоркой: NotoSans.ttf вариативный,
+    # начертания в нём — оси, и X-сервер видит там только обычное. Жирный
+    # поэтому указывает на тот же файл и от обычного не отличается.
+    # Синтезировать его не вышло: FreeType-бэкенд X опцию `:bw=` в fonts.dir
+    # не принимает, запись с ней просто не резолвится (проверено).
+    noto = mkNxFonts {
+      name = "noto";
+      sans = "${noto}/NotoSans.ttf";
+      sansBold = "${noto}/NotoSans.ttf";
+      mono = "${noto}/NotoSansMono.ttf";
+      monoBold = "${noto}/NotoSansMono.ttf";
+    };
+  };
 
   # Выбор пути шрифтов. NX_FONTS=original — вернуть растровые helvetica и
   # courier, как их задумывал Siemens.
   fontPathSetup = ''
-    if [ "''${NX_FONTS:-modern}" = original ]; then
-      nx_fp=${fontPathOriginal}
-    else
-      nx_fp=${fontPathModern}
-    fi
+    case "''${NX_FONTS:-liberation}" in
+      original) nx_fp=${fontPathOriginal} ;;
+      dejavu)   nx_fp=${nxFontSets.dejavu}/share/fonts/nx,${fontPathOriginal} ;;
+      noto)     nx_fp=${nxFontSets.noto}/share/fonts/nx,${fontPathOriginal} ;;
+      *)        nx_fp=${nxFontSets.liberation}/share/fonts/nx,${fontPathOriginal} ;;
+    esac
   '';
 
   # Снимок дерева окон вложенного сервера. Нужен, чтобы разбираться с
