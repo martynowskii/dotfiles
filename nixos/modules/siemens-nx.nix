@@ -125,11 +125,34 @@ let
     #
     # Высоту заголовка так не уменьшить — её задаёт тема GTK, и ни
     # titlebar-font, ни font-name на неё не влияют (проверено).
+    # Где открывать окна, которые сами себе места не выбрали — диалоги вроде
+    # настроек. center ставит их по центру экрана вместо ступенек от левого
+    # верхнего угла.
+    #
+    # Раскладке NX это не мешает, и вот почему. В place.c metacity при
+    # включённых обходах (значение по умолчанию) делает так:
+    #
+    #   if ((flags & PPosition) || (flags & USPosition))
+    #     goto done_no_constraints;   /* позиция от приложения — не трогаем */
+    #
+    # то есть окно, задавшее себе координаты, алгоритм размещения вообще
+    # обходит стороной. Панели NX их задают, и замер это подтвердил: при
+    # center окно без позиции переехало в центр, окно с позицией осталось на
+    # месте до пикселя.
+    #
+    # Оговорка: если NX задаёт позицию и своим диалогам, центрировать их
+    # нечем — перебить это можно только через disable-workarounds, а он
+    # заодно развалит расстановку панелей.
+    #
+    # Значения: center, smart, cascade, origin, random.
+    : "''${NX_PLACEMENT:=center}"
+
     metacity_cfg=$(mktemp -d)
     mkdir -p "$metacity_cfg/glib-2.0/settings" "$metacity_cfg/gtk-3.0"
-    cat > "$metacity_cfg/glib-2.0/settings/keyfile" <<'EOF'
+    cat > "$metacity_cfg/glib-2.0/settings/keyfile" <<EOF
 [org/gnome/metacity]
 compositor='none'
+placement-mode='$NX_PLACEMENT'
 EOF
 
     # Заголовок окна metacity 3.x рисует темой GTK, поэтому его высота
