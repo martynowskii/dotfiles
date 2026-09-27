@@ -365,7 +365,7 @@ window-rule {
 }
 
 switch-events {
-    lid-close { spawn-sh "noctalia msg session lock-and-suspend"; }
+    lid-close { spawn "noctalia" "msg" "session" "lock-and-suspend"; }
 }
 
 debug {
