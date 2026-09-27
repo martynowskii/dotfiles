@@ -1,0 +1,281 @@
+# Noctalia v5. Перенос настроек из settings.json (v4) — тот файл лежит рядом и не мешает:
+# v4 читает только JSON, v5 только TOML. Правки из GUI v5 уходят в
+# ~/.local/state/noctalia/settings.toml и перекрывают всё, что задано здесь.
+
+[shell]
+avatar_path         = "/home/arthr/.face"
+corner_radius_scale = 0.0        # v4: radiusRatio = 0 — панели без закруглений
+telemetry_enabled   = false
+
+[shell.animation]
+speed = 1.5
+
+[shell.shadow]
+direction = "down_right"
+
+[shell.panel]
+borders = false
+shadow  = false
+open_near_click_control_center = true   # v4: панель открывалась у своей кнопки в баре
+
+[shell.launcher]
+categories    = false
+app_grid      = false
+sort_by_usage = true
+
+[shell.screen_corners]
+enabled = false
+
+# Кнопки меню сессии как в v4 (отсчёт 10 с); гибернации и входа в UEFI
+# среди встроенных действий v5 нет — они заданы командами.
+[[shell.session.actions]]
+action            = "lock"
+shortcut          = "1"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action            = "suspend"
+shortcut          = "2"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action            = "command"
+label             = "Hibernate"
+command           = "systemctl hibernate"
+shortcut          = "3"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action            = "reboot"
+shortcut          = "4"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action            = "logout"
+shortcut          = "5"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action            = "shutdown"
+shortcut          = "6"
+countdown_seconds = 10
+variant           = "destructive"
+
+[[shell.session.actions]]
+action            = "command"
+label             = "UEFI"
+command           = "systemctl reboot --firmware-setup"
+shortcut          = "7"
+countdown_seconds = 10
+
+# ── Обои ──────────────────────────────────────────────────────────────────────
+
+[wallpaper]
+enabled               = true
+directory             = "/home/arthr/Pictures/Wallpapers"
+fill_mode             = "crop"
+transition            = ["fade", "wipe", "disc", "stripes", "honeycomb"]
+transition_duration   = 1500
+edge_smoothness       = 0.05
+transition_on_startup = true
+
+[wallpaper.default]
+path = "color:#142a2a"   # однотонный фон вместо картинки — в v5 это путь вида color:<hex>
+
+[wallpaper.automation]
+enabled          = false
+interval_seconds = 300
+
+# ── Тема ──────────────────────────────────────────────────────────────────────
+
+[theme]
+mode           = "dark"
+source         = "custom"
+custom_palette = "Solarized Osaka"
+
+[theme.templates]
+enable_builtin_templates = true
+builtin_ids              = ["niri", "foot"]
+
+# ── Уведомления и OSD ─────────────────────────────────────────────────────────
+
+[notification]
+position                  = "bottom_right"
+layer                     = "overlay"
+background_opacity        = 1.0
+border                    = false
+keep_dismissed_in_history = false   # v4: clearDismissed = true
+
+[notification.filter.amnezia]
+enabled      = true
+match        = "Amnezia VPN"
+show_toast   = false
+save_history = false
+
+[osd]
+position           = "top_right"
+background_opacity = 1.0
+border             = false
+
+# ── Блокировка и простой ──────────────────────────────────────────────────────
+
+[lockscreen]
+enabled             = true
+lock_before_suspend = true
+transition          = []     # v4: lockScreenAnimations = false
+blur_intensity      = 0.0
+tint_intensity      = 0.0
+
+[idle]
+pre_action_fade_seconds = 5.0
+
+[idle.behavior.screen-off]
+timeout = 600
+action  = "screen_off"
+enabled = true
+
+[idle.behavior.lock]
+timeout = 660
+action  = "lock"
+enabled = true
+
+[idle.behavior.suspend]
+timeout = 1800
+action  = "suspend"
+enabled = true
+
+# ── Сервисы ───────────────────────────────────────────────────────────────────
+
+[system.monitor]
+enabled = true
+
+[audio]
+enable_sounds = false
+
+[brightness]
+enable_ddcutil = false
+
+[calendar]
+enabled = false
+
+[weather]
+enabled = false
+
+[nightlight]
+enabled = false
+
+# ── Бар ───────────────────────────────────────────────────────────────────────
+
+[bar.main]
+position           = "top"
+background_opacity = 0.93
+radius             = 12
+margin_ends        = 4
+margin_edge        = 3
+padding            = 2
+widget_spacing     = 6
+shadow             = false
+capsule            = false
+
+start  = ["cpu", "cpu_temp", "ram", "workspaces", "media"]
+center = ["clock"]
+end    = ["tray", "volume", "bluetooth", "network", "notifications", "battery", "control-center"]
+
+# v4 держал загрузку CPU, температуру и память в одном виджете SystemMonitor —
+# в v5 это три отдельных sysmon.
+[widget.cpu]
+type          = "sysmon"
+stat          = "cpu_usage"
+visualization = "none"
+font_family   = "monospace"
+
+[widget.cpu_temp]
+type          = "sysmon"
+stat          = "cpu_temp"
+visualization = "none"
+font_family   = "monospace"
+
+[widget.ram]
+type          = "sysmon"
+stat          = "ram_used"
+visualization = "none"
+font_family   = "monospace"
+
+[widget.workspaces]
+label_source              = "id"
+max_label_chars           = 2
+labels_only_when_occupied = true
+pill_scale                = 0.6
+focused_color             = "primary"
+occupied_color            = "secondary"
+empty_color               = "secondary"
+font_weight               = 700
+
+[widget.media]
+artist_first       = true
+max_length         = 256
+title_scroll       = "on_hover"
+hide_when_no_media = false
+
+[widget.clock]
+format         = "{:%H:%M %a, %b %d}"
+tooltip_format = "{:%H:%M %a, %b %d}"
+
+[widget.tray]
+hide_passive = false
+
+[widget.volume]
+show_label = false
+
+[widget.volume.actions]
+middle = "exec pwvucontrol || pavucontrol"
+
+[widget.bluetooth]
+show_label = false
+
+[widget.network]
+show_label = false
+
+[widget.notifications]
+hide_when_no_unread = false
+
+[widget.battery]
+display_mode = "graphic"
+
+# ── Док ───────────────────────────────────────────────────────────────────────
+
+[dock]
+enabled             = true
+position            = "bottom"
+auto_hide           = true
+background_opacity  = 1.0
+shadow              = false
+show_dots           = true
+inactive_opacity    = 0.6
+active_monitor_only = true
+launcher_position   = "start"
+pinned              = ["footclient", "chromium-browser"]
+
+# ── Центр управления ──────────────────────────────────────────────────────────
+
+[control_center.calendar]
+show_events_card  = true
+show_week_numbers = false
+
+[[control_center.shortcuts]]
+type = "wifi"
+
+[[control_center.shortcuts]]
+type = "bluetooth"
+
+[[control_center.shortcuts]]
+type = "dark_mode"
+
+[[control_center.shortcuts]]
+type = "power_profile"
+
+[[control_center.shortcuts]]
+type = "caffeine"
+
+[[control_center.shortcuts]]
+type = "nightlight"

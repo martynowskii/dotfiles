@@ -270,7 +270,7 @@ layout {
 // See the binds section below for more spawn examples.
 
 // This line starts waybar, a commonly used bar for Wayland compositors.
-spawn-at-startup "noctalia-shell"
+spawn-at-startup "noctalia"
 
 // XWayland для X11-приложений (Siemens NX 10 и прочий Motif-софт).
 // niri не встраивает XWayland, его поднимает отдельный процесс-сателлит.
@@ -365,7 +365,7 @@ window-rule {
 }
 
 switch-events {
-    lid-close { spawn "noctalia-shell" "ipc" "call" "sessionMenu" "lockAndSuspend"; }
+    lid-close { spawn-sh "noctalia msg session lock-and-suspend"; }
 }
 
 debug {
