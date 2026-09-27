@@ -1,7 +1,9 @@
 { pkgs, ... }:
 
 let
-  foot = "${pkgs.foot}/bin/foot";
+  # footclient, а не foot: сервер уже запущен (programs.foot.server).
+  # Без --no-wait клиент ждёт закрытия окна — чузеру это обязательно.
+  term = "${pkgs.foot}/bin/footclient";
   yazi = "${pkgs.yazi}/bin/yazi";
 
   # Урезанная версия yazi-wrapper.sh из пакета портала: пути абсолютные,
@@ -11,14 +13,14 @@ let
     multiple="$1"; directory="$2"; save="$3"; path="$4"; out="$5"
 
     if [ "$directory" = "1" ]; then
-      ${foot} --title=termfilechooser \
+      ${term} --title=termfilechooser \
         ${yazi} --chooser-file="$out" --cwd-file="$out.1" "$path"
       if [ ! -s "$out" ] && [ -s "$out.1" ]; then
         cat "$out.1" > "$out"
       fi
       rm -f "$out.1"
     else
-      ${foot} --title=termfilechooser \
+      ${term} --title=termfilechooser \
         ${yazi} --chooser-file="$out" "$path"
     fi
   '';
@@ -48,7 +50,7 @@ let
     def show(uris):
         targets = [p for p in (to_path(u) for u in uris) if p]
         if targets:
-            subprocess.Popen(["${foot}", "--title=yazi", "${yazi}", targets[0]])
+            subprocess.Popen(["${term}", "--title=yazi", "${yazi}", targets[0]])
 
 
     class FileManager1:

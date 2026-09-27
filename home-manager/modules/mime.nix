@@ -22,13 +22,14 @@ in
   home.packages = [ docReader ];
 
   # Terminal=true в штатных .desktop на голом niri не отрабатывает,
-  # поэтому терминал задан явно. nvim и yazi берутся из PATH: neovim
+  # поэтому терминал задан явно. footclient, а не foot: сервер уже
+  # запущен (programs.foot.server). nvim и yazi берутся из PATH: neovim
   # закреплён отдельным пином в nvim.nix.
   xdg.desktopEntries = {
     doc-reader = {
       name = "Doc reader";
       comment = "Читать .doc и .docx в пейджере";
-      exec = "${pkgs.foot}/bin/foot ${docReader}/bin/doc-reader %f";
+      exec = "${pkgs.foot}/bin/footclient ${docReader}/bin/doc-reader %f";
       terminal = false;
       noDisplay = true;
       mimeType = [
@@ -39,7 +40,7 @@ in
 
     nvim-term = {
       name = "Neovim";
-      exec = "${pkgs.foot}/bin/foot nvim %f";
+      exec = "${pkgs.foot}/bin/footclient nvim %f";
       terminal = false;
       noDisplay = true;
       mimeType = [ "text/plain" "text/markdown" ];
@@ -47,7 +48,7 @@ in
 
     yazi-term = {
       name = "Yazi";
-      exec = "${pkgs.foot}/bin/foot yazi %f";
+      exec = "${pkgs.foot}/bin/footclient yazi %f";
       terminal = false;
       noDisplay = true;
       mimeType = [ "inode/directory" ];
