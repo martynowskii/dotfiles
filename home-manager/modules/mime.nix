@@ -65,9 +65,23 @@ in
       "application/epub+zip" = "org.pwmt.zathura.desktop";
       "image/vnd.djvu" = "org.pwmt.zathura.desktop";
 
-      "application/msword" = "doc-reader.desktop";
+      # gdoc рендерит документ в HTML и открывает в chromium (см. gdoc.nix).
+      # doc-reader остаётся под рукой как быстрый текстовый просмотр.
+      "application/msword" = "gdoc.desktop";
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
-        "doc-reader.desktop";
+        "gdoc.desktop";
+      "application/vnd.oasis.opendocument.text" = "gdoc.desktop";
+      "application/rtf" = "gdoc.desktop";
+
+      "application/vnd.ms-excel" = "gdoc.desktop";
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" =
+        "gdoc.desktop";
+      "application/vnd.oasis.opendocument.spreadsheet" = "gdoc.desktop";
+      "text/csv" = "gdoc.desktop";
+
+      "application/vnd.ms-powerpoint" = "gdoc.desktop";
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation" =
+        "gdoc.desktop";
 
       "image/png" = "imv.desktop";
       "image/jpeg" = "imv.desktop";
