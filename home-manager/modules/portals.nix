@@ -96,7 +96,10 @@ in
     save_mode=suggested
   '';
 
-  # Запуск по требованию: сервис поднимается при первом вызове метода.
+  # Это же имя регистрирует nautilus (его .service лежит внутри пакета,
+  # а пакет приходит в систему транзитивно). Файл в XDG_DATA_HOME имеет
+  # приоритет над системным, поэтому активируется yazi. Отобрать имя у
+  # уже запущенного nautilus нельзя — он берёт его без права замены.
   xdg.dataFile."dbus-1/services/org.freedesktop.FileManager1.service".text = ''
     [D-BUS Service]
     Name=org.freedesktop.FileManager1
