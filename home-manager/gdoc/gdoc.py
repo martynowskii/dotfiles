@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """gdoc — рендерит офисные документы в PDF и открывает их в zathura.
 
-Конвертеры подбираются по расширению: pandoc для OOXML/ODF, wvHtml для
+Конвертеры подбираются по расширению: pandoc для OOXML/ODF/markdown, wvHtml для
 старого .doc, ssconvert для таблиц, свой обход XML для .pptx. Результат
 складывается в кэш и переиспользуется, пока файл не изменился.
 """
@@ -35,6 +35,12 @@ PANDOC_FORMATS = {
     ".rtf": "rtf",
     ".epub": "epub",
     ".fb2": "fb2",
+    # Читатель pandoc'а, а не gfm: таблицы и $math$ он понимает из коробки.
+    ".md": "markdown",
+    ".markdown": "markdown",
+    # Запасной путь для .tex, когда в системе нет TeX-движка.
+    ".tex": "latex",
+    ".latex": "latex",
 }
 SHEET_EXTS = {".xlsx", ".xls", ".ods", ".csv", ".tsv", ".gnumeric", ".xlsm"}
 
@@ -570,18 +576,107 @@ def render_ppt(src, outdir):
     return "\n".join(parts), False
 
 
-def pick_renderer(src):
+TEX_EXTS = {".tex", ".latex"}
+# latexmk первым: он сам гоняет нужное число проходов и подхватывает bibtex.
+TEX_ENGINES = ("latexmk", "tectonic", "xelatex", "lualatex", "pdflatex")
+# fontspec/polyglossia работают только в xetex/luatex — по ним и определяем.
+XETEX_HINT = re.compile(r"\\usepackage(\[[^\]]*\])?\{(fontspec|polyglossia|xeCJK)\}")
+TEX_ERROR = re.compile(r"^(?:!|.+?:\d+:)\s*(.+)$", re.M)
+
+
+def tex_engine():
+    """Настоящий TeX в системе, если он есть. Иначе .tex пойдёт через pandoc."""
+    override = os.environ.get("GDOC_TEX")
+    if override:
+        return override if shutil.which(override) or Path(override).is_file() else None
+    for name in TEX_ENGINES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def compile_tex(src, outdir, pdf, engine):
+    """Собрать .tex настоящим движком.
+
+    Запускаемся из каталога документа, иначе не найдутся \\input и картинки;
+    вспомогательные файлы уводим в кэш, чтобы не сорить рядом с исходником.
+    """
+    name = Path(engine).name
+    head = src.read_text("utf-8", "replace")[:20000]
+    xe = bool(XETEX_HINT.search(head))
+
+    if name == "latexmk":
+        runs = [[engine, "-interaction=nonstopmode", "-halt-on-error",
+                 "-file-line-error", "-xelatex" if xe else "-pdf",
+                 f"-outdir={outdir}", str(src)]]
+    elif name == "tectonic":
+        runs = [[engine, "--keep-logs", "-o", str(outdir), str(src)]]
+    else:
+        # Без latexmk за оглавлением и ссылками нужен второй проход.
+        one = [engine, "-interaction=nonstopmode", "-halt-on-error",
+               "-file-line-error", f"-output-directory={outdir}", str(src)]
+        runs = [one, one]
+
+    for cmd in runs:
+        try:
+            run(cmd, cwd=src.parent, timeout=600)
+        except subprocess.TimeoutExpired:
+            raise RenderError(f"{name}: сборка не уложилась в 600 с") from None
+        except RenderError:
+            # TeX пишет диагностику в stdout, а не в stderr, — достаём её из лога.
+            log = outdir / f"{src.stem}.log"
+            hint = ""
+            if log.exists():
+                errs = TEX_ERROR.findall(log.read_text("utf-8", "replace"))
+                hint = "; ".join(dict.fromkeys(errs))[:300]
+            raise RenderError(f"{name}: {hint or 'сборка не удалась'}") from None
+
+    produced = outdir / f"{src.stem}.pdf"
+    if not produced.exists():
+        raise RenderError(f"{name}: PDF не появился")
+    if produced != pdf:
+        produced.replace(pdf)
+
+
+def _tex_via_pandoc(src, outdir):
+    """Приблизительный показ .tex, когда TeX-движка в системе нет.
+
+    pandoc читает разметку, но не исполняет преамбулу: свои \\newcommand,
+    классы и пакеты до него не доходят.
+    """
+    body, wide = render_pandoc(src, outdir, "latex")
+    note = (
+        '<p class="note">TeX-движок не найден, документ показан приблизительно: '
+        "pandoc читает разметку, но не исполняет преамбулу, свои макросы и "
+        "пакеты. Поставьте texlive или tectonic — gdoc подхватит его сам.</p>\n"
+    )
+    return note + body, wide
+
+
+def pick_renderer(src, as_pdf=True):
+    """Вернуть (функция, метка, готовый_pdf).
+
+    Третий элемент говорит, что рендерер сам выдаёт PDF и промежуточный
+    HTML не нужен — так работает только настоящая сборка LaTeX.
+    """
     ext = src.suffix.lower()
+    if ext in TEX_EXTS:
+        engine = tex_engine() if as_pdf else None
+        if engine:
+            return (lambda s, o, p: compile_tex(s, o, p, engine)), "tex", True
+        return (lambda s, o: _tex_via_pandoc(s, o)), "tex", False
     if ext in PANDOC_FORMATS:
-        return lambda s, o: render_pandoc(s, o, PANDOC_FORMATS[ext]), ext.lstrip(".")
+        return (lambda s, o: render_pandoc(s, o, PANDOC_FORMATS[ext]),
+                ext.lstrip("."), False)
     if ext == ".doc":
-        return render_doc, "doc"
+        return render_doc, "doc", False
     if ext in SHEET_EXTS:
-        return render_sheet, ext.lstrip(".")
+        return render_sheet, ext.lstrip("."), False
     if ext == ".pptx":
-        return render_pptx, "pptx"
+        return render_pptx, "pptx", False
     if ext == ".ppt":
-        return render_ppt, "ppt"
+        return render_ppt, "ppt", False
     raise RenderError(f"не знаю, чем открыть {ext or 'файл без расширения'}")
 
 
@@ -633,9 +728,9 @@ def slugify(stem):
     return re.sub(r"[^\w.-]+", "_", stem).strip(".")[:48] or "doc"
 
 
-def cache_dir(src):
+def cache_dir(src, salt=""):
     st = src.stat()
-    key = f"{RENDERER}|{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
+    key = f"{RENDERER}|{salt}|{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
     digest = hashlib.sha1(key.encode()).hexdigest()[:16]
     return cache_root() / f"{slugify(src.stem)}-{digest}"
 
@@ -652,13 +747,27 @@ def prune_cache(keep=40):
 
 
 def build(src, force=False, as_pdf=True):
-    out = cache_dir(src)
+    render, kind, direct = pick_renderer(src, as_pdf)
+    # Соль в ключе: поставили TeX — приблизительный рендер из кэша не всплывёт.
+    out = cache_dir(src, "tex" if direct else "")
     index = out / "index.html"
     # Имя PDF видно в заголовке zathura, поэтому берём его от исходника.
     pdf = out / f"{slugify(src.stem)}.pdf"
 
+    if direct:
+        if force or not pdf.exists():
+            if out.exists():
+                shutil.rmtree(out)
+            out.mkdir(parents=True)
+            try:
+                render(src, out, pdf)
+            except Exception:
+                shutil.rmtree(out, ignore_errors=True)
+                raise
+            prune_cache()
+        return pdf
+
     if force or not index.exists():
-        render, kind = pick_renderer(src)
         if out.exists():
             shutil.rmtree(out)
         out.mkdir(parents=True)
@@ -680,11 +789,15 @@ def build(src, force=False, as_pdf=True):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="gdoc",
-        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt в zathura.",
+        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt/.md/.tex в zathura.",
     )
     ap.add_argument("files", nargs="+", metavar="ФАЙЛ")
     ap.add_argument("-f", "--force", action="store_true", help="перерисовать, игнорируя кэш")
-    ap.add_argument("-p", "--path", action="store_true", help="напечатать путь, не открывать")
+    ap.add_argument("-p", "--path", action="store_true",
+                    help="напечатать путь в кэше, не открывать")
+    ap.add_argument("-o", "--out", metavar="КУДА",
+                    help="сохранить PDF рядом насовсем: каталог или имя файла "
+                         "(каталог '.' — текущий); окно при этом не открывается")
     ap.add_argument("--html", action="store_true",
                     help="не печатать PDF, а открыть HTML в браузере")
     ap.add_argument("-v", "--viewer", default=os.environ.get("GDOC_VIEWER", "zathura"),
@@ -698,6 +811,14 @@ def main(argv=None):
         shutil.rmtree(cache_root(), ignore_errors=True)
         print("кэш очищен")
         return 0
+
+    if args.out and args.html:
+        ap.error("--out сохраняет PDF, с --html он не имеет смысла")
+
+    dest = Path(args.out).expanduser() if args.out else None
+    # Имя файла в -o допустимо только для одного документа.
+    if dest is not None and len(args.files) > 1 and not dest.is_dir():
+        ap.error(f"файлов несколько — в --out нужен существующий каталог, а не {dest}")
 
     rc = 0
     targets = []
@@ -718,6 +839,22 @@ def main(argv=None):
 
     if not targets:
         return rc
+
+    if dest is not None:
+        for t in targets:
+            final = dest / t.name if dest.is_dir() else dest
+            if final.suffix.lower() != ".pdf":
+                final = final.with_name(final.name + ".pdf")
+            try:
+                final.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(t, final)
+            except OSError as exc:
+                print(f"gdoc: не записать {final}: {exc.strerror}", file=sys.stderr)
+                rc = 1
+                continue
+            print(final)
+        return rc
+
     if args.path:
         for t in targets:
             print(t)
