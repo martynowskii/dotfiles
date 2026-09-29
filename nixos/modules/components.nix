@@ -19,7 +19,6 @@
     file
     jq
     libimobiledevice
-    noctalia-shell
     swaylock
     wget
     wl-clipboard
