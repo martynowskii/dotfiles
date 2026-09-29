@@ -2,6 +2,7 @@
 
 {
   imports = [
+    ./claude-code-unstable.nix
     ./claude.nix
     ./docs.nix
     ./foot.nix
