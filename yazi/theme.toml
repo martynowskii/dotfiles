@@ -1,0 +1,7 @@
+[flavor]
+dark  = "noctalia"
+light = "noctalia"
+
+[indicator]
+# Noctalia перетирает flavor.toml целиком, а в theme.toml трогает только [flavor]
+padding = { open = "", close = "" }
