@@ -14,10 +14,32 @@
         light = "noctalia";
       };
 
-      # По умолчанию тут U+E0B6/U+E0B4 — они и рисуют скругление у выбранной строки
+      # Везде ниже по умолчанию U+E0B6/U+E0B4 — они и рисуют скругления
       indicator.padding = {
         open = "";
         close = "";
+      };
+
+      status = {
+        sep_left = {
+          open = "";
+          close = "";
+        };
+        sep_right = {
+          open = "";
+          close = "";
+        };
+      };
+
+      tabs = {
+        sep_inner = {
+          open = "";
+          close = "";
+        };
+        sep_outer = {
+          open = "";
+          close = "";
+        };
       };
     };
 
