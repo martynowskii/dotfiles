@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 
 let
   # Для .doc/.docx нет GUI-приложения, а xdg-open требует .desktop.
@@ -17,6 +17,10 @@ let
       *)      printf 'не .doc/.docx: %s\n' "$f" >&2; read -r _; exit 1 ;;
     esac | ${pkgs.less}/bin/less
   '';
+
+  # Тот же список, что получает .desktop в gdoc.nix: держать его в двух
+  # местах руками — верный способ их рассинхронизировать.
+  gdocMimes = import ../gdoc/mimes.nix;
 in
 {
   home.packages = [ docReader ];
@@ -59,7 +63,7 @@ in
   xdg.mimeApps = {
     enable = true;
 
-    defaultApplications = {
+    defaultApplications = lib.genAttrs gdocMimes (_: "gdoc.desktop") // {
       "application/pdf" = "org.pwmt.zathura.desktop";
       "application/postscript" = "org.pwmt.zathura.desktop";
       "application/epub+zip" = "org.pwmt.zathura.desktop";
@@ -68,22 +72,7 @@ in
       # gdoc рендерит документ в PDF и открывает в zathura (см. gdoc.nix).
       # doc-reader дефолтом больше нигде не стоит и остаётся только как
       # команда в терминале — быстро заглянуть в .doc без рендера.
-      # text/csv сюда намеренно не входит: это обычный текст, и правят его
-      # чаще, чем читают, так что он остаётся за nvim через text/plain.
-      "application/msword" = "gdoc.desktop";
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
-        "gdoc.desktop";
-      "application/vnd.oasis.opendocument.text" = "gdoc.desktop";
-      "application/rtf" = "gdoc.desktop";
-
-      "application/vnd.ms-excel" = "gdoc.desktop";
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" =
-        "gdoc.desktop";
-      "application/vnd.oasis.opendocument.spreadsheet" = "gdoc.desktop";
-
-      "application/vnd.ms-powerpoint" = "gdoc.desktop";
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation" =
-        "gdoc.desktop";
+      # Что намеренно не отдано gdoc и почему — в самом gdoc/mimes.nix.
 
       "image/png" = "imv.desktop";
       "image/jpeg" = "imv.desktop";

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
 import hashlib
 import html
 import os
@@ -28,7 +29,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple
@@ -53,6 +56,21 @@ MAX_ROWS = 5000
 # в фон навсегда, поэтому у каждого запуска есть потолок.
 RUN_TIMEOUT = 300
 PRINT_TIMEOUT = 180
+# Глубже этого разметку уже никто не писал осмысленно, а очистка на
+# вложенности в десятки тысяч тегов съедает секунды CPU.
+MAX_DEPTH = 200
+# Старше этого недособранный каталог точно брошен упавшим запуском:
+# живой давно бы его дочистил.
+STAGING_MAX_AGE = 3600
+# Потолок на распаковку вложений презентации, чтобы zip-бомба не легла
+# в кэш целиком.
+MAX_MEDIA_BYTES = 256 * 1024 * 1024
+# Имя тега берётся из чужого документа и уезжает в вывод — пропускаем
+# только то, что точно является именем.
+TAG_NAME = re.compile(r"[a-zA-Z][a-zA-Z0-9:._-]*")
+# Растровые data-картинки безопасны, в отличие от svg+xml, который
+# является документом и умеет нести скрипты.
+DATA_IMAGE = re.compile(r"data:image/(png|jpe?g|gif|webp|bmp|avif|tiff);")
 
 
 def tool(env_var: str, name: str) -> str:
@@ -69,7 +87,15 @@ CHROMIUM = tool("GDOC_CHROMIUM", "chromium")
 
 
 class RenderError(Exception):
-    """Ошибка, которую можно показать пользователю одной строкой."""
+    """Ошибка, которую можно показать пользователю одной строкой.
+
+    В `raw` лежит полный вывод программы: сообщение для человека урезано до
+    пары строк, а разбирать причину иногда нужно по всему тексту.
+    """
+
+    def __init__(self, message: str, raw: str = "") -> None:
+        super().__init__(message)
+        self.raw = raw
 
 
 # --------------------------------------------------------------------------
@@ -87,6 +113,10 @@ class _Sanitizer(HTMLParser):
     DROP_TREE = frozenset({
         "script", "style", "noscript", "template", "iframe", "frame",
         "frameset", "object", "embed", "applet", "form", "title", "portal",
+        # SMIL умеет подставлять ссылку в href уже после очистки: адрес
+        # лежит в values/to/from, а это не атрибуты ссылок. Конвертеры
+        # анимацию не выдают, так что проще выбросить её целиком.
+        "animate", "animatetransform", "animatemotion", "set",
     })
     # Сам тег выбрасываем, детей оставляем.
     DROP_TAG = frozenset({
@@ -109,32 +139,76 @@ class _Sanitizer(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.out: list[str] = []
         self.open_tags: list[str] = []
+        # Счётчик открытых тегов по имени: проверка вхождения по списку
+        # квадратична, и на документе с глубокой вложенностью очистка
+        # занимала секунды CPU без всякого таймаута над ней.
+        self.open_count: Counter[str] = Counter()
         self.suppress = 0
+        self.dropped: Counter[str] = Counter()
+
+    def _dropped(self, what: str) -> None:
+        self.dropped[what] += 1
+        return None
 
     # -- атрибуты -------------------------------------------------------
 
-    @staticmethod
-    def _safe_url(value: str) -> str | None:
-        """Пропускаем только то, что не ходит наружу и не исполняется."""
+    def _safe_url(self, value: str) -> str | None:
+        """Пропускаем только то, что лежит внутри каталога сборки.
+
+        Не только «не ходит наружу»: страница живёт по file://, поэтому
+        `/etc/hostname` и `../../x` тоже читаются и втягиваются в PDF.
+        Разрешён лишь относительный путь без выхода вверх — такие ссылки
+        и выдают конвертеры на вытащенные ими картинки.
+        """
         v = value.strip()
         if not v:
             return None
         low = v.lower()
-        if low.startswith("data:image/"):
+        if DATA_IMAGE.match(low):
             return v
-        if low.startswith("//"):  # протокол-относительная ссылка — тоже сеть
-            return None
-        head = v.split("/", 1)[0]
-        if ":" in head:  # http:, file:, javascript:, data:<не картинка>
-            return None
+        if low.startswith("data:"):  # в т.ч. svg+xml, а он умеет скрипты
+            return self._dropped("ссылка наружу")
+        if v.startswith("#"):  # якорь внутри страницы
+            return v
+        if low.startswith("//") or v.startswith(("/", "\\")):
+            return self._dropped("ссылка наружу")
+        if ":" in v.split("/", 1)[0]:  # http:, file:, javascript:, data:<не картинка>
+            return self._dropped("ссылка наружу")
+        if any(part == ".." for part in re.split(r"[/\\]", v)):
+            return self._dropped("ссылка наружу")
         return v
 
-    @staticmethod
-    def _safe_style(value: str) -> str | None:
-        low = value.lower()
-        if "url(" in low or "expression(" in low or "@import" in low:
-            return None
-        return value
+    # Свойства, которыми конвертеры оформляют текст. Всё остальное режем:
+    # денилист по подстрокам обходится эскейпом вида u\72l(...), который CSS
+    # понимает, а `"url(" in value` — нет.
+    STYLE_PROPS = frozenset({
+        "color", "background-color", "background", "font", "font-size",
+        "font-weight", "font-style", "font-family", "font-variant",
+        "text-align", "text-decoration", "text-indent", "text-transform",
+        "vertical-align", "line-height", "letter-spacing", "white-space",
+        "margin", "margin-top", "margin-bottom", "margin-left", "margin-right",
+        "padding", "padding-top", "padding-bottom", "padding-left",
+        "padding-right", "border", "border-top", "border-bottom",
+        "border-left", "border-right", "border-color", "border-style",
+        "border-width", "border-collapse", "width", "height", "max-width",
+        "min-width", "display", "float", "clear", "list-style", "list-style-type",
+    })
+
+    def _safe_style(self, value: str) -> str | None:
+        kept = []
+        for chunk in value.split(";"):
+            prop, sep, val = chunk.partition(":")
+            if not sep:
+                continue
+            prop = prop.strip().lower()
+            val = val.strip()
+            if prop not in self.STYLE_PROPS:
+                continue
+            # Ни функций, ни эскейпов: цвета и размеры обходятся без них.
+            if any(c in val for c in "(\\@;{}"):
+                continue
+            kept.append(f"{prop}: {val}")
+        return "; ".join(kept) or None
 
     def _attrs(self, attrs: Iterable[tuple[str, str | None]]) -> str:
         parts = []
@@ -158,6 +232,12 @@ class _Sanitizer(HTMLParser):
 
     # -- обход ----------------------------------------------------------
 
+    def _skip(self, tag: str) -> bool:
+        """Тег, который не должен попасть в вывод как разметка."""
+        return (tag in self.DROP_TAG
+                or not TAG_NAME.fullmatch(tag)
+                or len(self.open_tags) >= MAX_DEPTH)
+
     def handle_starttag(self, tag: str, attrs) -> None:
         if self.suppress:
             if tag in self.DROP_TREE:
@@ -166,16 +246,23 @@ class _Sanitizer(HTMLParser):
         if tag in self.DROP_TREE:
             self.suppress = 1
             return
-        if tag in self.DROP_TAG:
+        if self._skip(tag):
             return
         self.out.append(f"<{tag}{self._attrs(attrs)}>")
         if tag not in self.VOID:
             self.open_tags.append(tag)
+            self.open_count[tag] += 1
 
     def handle_startendtag(self, tag: str, attrs) -> None:
-        if self.suppress or tag in self.DROP_TREE or tag in self.DROP_TAG:
+        if self.suppress or tag in self.DROP_TREE or self._skip(tag):
             return
-        self.out.append(f"<{tag}{self._attrs(attrs)}/>")
+        if tag in self.VOID:
+            self.out.append(f"<{tag}{self._attrs(attrs)}>")
+            return
+        # В HTML косая черта перед `>` игнорируется, так что <section/> из
+        # XHTML-подобного вывода открыл бы элемент и проглотил весь остаток
+        # документа. Закрываем сразу — намерение было именно такое.
+        self.out.append(f"<{tag}{self._attrs(attrs)}></{tag}>")
 
     def handle_endtag(self, tag: str) -> None:
         if self.suppress:
@@ -184,12 +271,13 @@ class _Sanitizer(HTMLParser):
             return
         if tag in self.DROP_TAG or tag in self.VOID:
             return
-        if tag not in self.open_tags:
+        if not self.open_count[tag]:
             return  # закрытие без открытия — выбрасываем
         # Закрываем всё, что осталось незакрытым внутри: иначе чужая
         # несбалансированная разметка растащит вёрстку всей страницы.
         while self.open_tags:
             current = self.open_tags.pop()
+            self.open_count[current] -= 1
             self.out.append(f"</{current}>")
             if current == tag:
                 break
@@ -212,12 +300,27 @@ class _Sanitizer(HTMLParser):
         return "".join(self.out)
 
 
-def sanitize(markup: str) -> str:
-    """Очистить разметку конвертера перед вставкой в страницу."""
+def sanitize(markup: str) -> tuple[str, int]:
+    """Очистить разметку конвертера. Возвращает ещё и число потерь.
+
+    О потерянном надо сказать: документ со ссылочными иллюстрациями иначе
+    открывается с пустыми местами и без единого намёка, что что-то вырезано.
+    """
     parser = _Sanitizer()
     parser.feed(markup)
     parser.close()
-    return parser.result()
+    return parser.result(), sum(parser.dropped.values())
+
+
+def sanitized_body(markup: str) -> str:
+    """Очищенная разметка вместе с плашкой о вырезанном, если оно было."""
+    body, dropped = sanitize(markup)
+    if not dropped:
+        return body
+    return note(
+        f"Вырезано ссылок на внешние ресурсы: {dropped}. Документ тянул их "
+        "из сети или из файловой системы; на их месте пусто."
+    ) + body
 
 
 # --------------------------------------------------------------------------
@@ -425,7 +528,8 @@ def run(cmd: list[str], timeout: int = RUN_TIMEOUT, **kw) -> bytes:
     except subprocess.TimeoutExpired:
         raise RenderError(f"{name} не уложился в {timeout} с") from None
     if proc.returncode != 0:
-        raise RenderError(f"{name}: {_why(proc.stderr, proc.returncode)}")
+        raw = (proc.stderr or b"").decode("utf-8", "replace")
+        raise RenderError(f"{name}: {_why(proc.stderr, proc.returncode)}", raw)
     return proc.stdout or b""
 
 
@@ -475,7 +579,9 @@ def _jpeg_end(data: bytes, start: int) -> int | None:
     if start + 4 > n or not 0xC0 <= data[start + 3] <= 0xFE:
         return None
     i = start + 2
-    while i + 4 <= n:
+    # Двух байт достаточно: маркер конца длину за собой не тащит, и картинка
+    # вполне может заканчиваться ровно на границе данных.
+    while i + 2 <= n:
         if data[i] != 0xFF:
             return None
         marker = data[i + 1]
@@ -484,6 +590,8 @@ def _jpeg_end(data: bytes, start: int) -> int | None:
         if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
             i += 2
             continue
+        if i + 4 > n:
+            return None
         seg = int.from_bytes(data[i + 2:i + 4], "big")
         if seg < 2:
             return None
@@ -563,7 +671,7 @@ def render_pandoc(src: Path, outdir: Path, fmt: str) -> str:
          "-o", "-", str(src)],
         cwd=outdir,
     ).decode("utf-8", "replace")
-    return sanitize(markup)
+    return sanitized_body(markup)
 
 
 STRANGE_IMG = re.compile(r'<img\b[^>]*src="StrangeNoGraphicData"[^>]*>', re.I)
@@ -580,7 +688,9 @@ def render_doc(src: Path, outdir: Path) -> str:
         run([WVHTML, "--charset=utf-8", f"--targetdir={outdir}",
              str(src), str(target)])
         markup = target.read_text("utf-8", "replace")
-    except RenderError:
+    except (RenderError, OSError):
+        # OSError сюда попадает, когда wvHtml вышел с нулём, но файла не
+        # написал: читать нечего, а документ показать всё равно надо.
         text = run([ANTIWORD, "-m", "UTF-8.txt", str(src)]).decode("utf-8", "replace")
         markup = "".join(
             f"<p>{html.escape(p)}</p>\n" for p in text.split("\n\n") if p.strip()
@@ -588,7 +698,7 @@ def render_doc(src: Path, outdir: Path) -> str:
     finally:
         target.unlink(missing_ok=True)
 
-    body = sanitize(markup)
+    body = sanitized_body(markup)
     names = extract_blobs(src.read_bytes(), outdir / "media")
 
     # wvHtml оставляет плейсхолдеры в нужных местах — подставляем по порядку.
@@ -613,21 +723,19 @@ def render_doc(src: Path, outdir: Path) -> str:
     return head + body + gallery(leftover, "Остальные изображения")
 
 
+# Форма числа целиком, без опоры на float(): тот принимает inf, nan, 1_000
+# и цифры других письменностей — в выгрузках такое встречается как текст.
+# Пробел внутри допустим только как разделитель тысяч: «1 2 3» — не число.
+NUMBER = re.compile(
+    r"[+-]?(?:[0-9]{1,3}(?:\u00a0?[0-9]{3})+|[0-9]+)(?:[.,][0-9]+)?"
+    r"(?:[eE][+-]?[0-9]+)?"
+)
+
+
 def is_number(text: str) -> bool:
     """Похоже ли содержимое ячейки на число (для выравнивания вправо)."""
     cleaned = text.strip().rstrip("%").strip().replace("\u00a0", " ")
-    if not cleaned:
-        return False
-    groups = cleaned.split(" ")
-    # Пробел внутри допустим только как разделитель тысяч: «1 000 000».
-    # Иначе «1 2 3» склеилось бы в одно число и уехало вправо целиком.
-    if any(not (g.isdigit() and len(g) == 3) for g in groups[1:]):
-        return False
-    try:
-        float("".join(groups).replace(",", ".", 1))
-    except ValueError:
-        return False
-    return True
+    return bool(cleaned) and NUMBER.fullmatch(cleaned.replace(" ", "\u00a0")) is not None
 
 
 def _table(rows: list[list[str]], caption: str) -> str:
@@ -820,12 +928,27 @@ def render_pptx(src: Path, outdir: Path) -> str:
         raise RenderError("это не .pptx — архив не читается") from None
     with zf:
         media = {}
-        for name in zf.namelist():
-            if name.startswith("ppt/media/") and not name.endswith("/"):
-                base = Path(name).name
-                (media_dir / base).write_bytes(zf.read(name))
-                media[name] = f"media/{base}"
+        budget = MAX_MEDIA_BYTES
+        skipped = 0
+        for info in zf.infolist():
+            name = info.filename
+            if not name.startswith("ppt/media/") or name.endswith("/"):
+                continue
+            # Размер сверяем по заголовку, до распаковки: иначе zip-бомба
+            # разворачивается в кэш целиком.
+            if info.file_size > budget:
+                skipped += 1
+                continue
+            budget -= info.file_size
+            base = Path(name).name
+            (media_dir / base).write_bytes(zf.read(name))
+            media[name] = f"media/{base}"
         parts = []
+        if skipped:
+            parts.append(note(
+                f"Не распаковано вложений: {skipped} — презентация просит "
+                "больше места, чем разумно держать в кэше."
+            ))
         for number, slide in enumerate(_slide_order(zf), 1):
             try:
                 root = ET.fromstring(zf.read(slide))
@@ -915,9 +1038,12 @@ def pick_format(src: Path) -> Format:
 
 # Сбой запуска, который лечится отключением песочницы: ядро без
 # unprivileged userns. Всё остальное отключением песочницы не чинится.
+# Сверяем по полному stderr, а не по сообщению для человека: chromium пишет
+# после этой строки ещё несколько, и обрезка до последних двух её съедает.
 SANDBOX_TROUBLE = re.compile(
-    r"namespace sandbox|clone\(\) returned|No usable sandbox|SUID sandbox|"
-    r"CLONE_NEWUSER", re.I)
+    r"Failed to move to new namespace|namespace sandbox|clone\(\) returned|"
+    r"No usable sandbox|SUID sandbox|CLONE_NEWUSER|"
+    r"sandbox.*Operation not permitted", re.I)
 
 
 def _chromium_cmd(index: Path, pdf: Path, profile: Path) -> list[str]:
@@ -952,7 +1078,7 @@ def to_pdf(index: Path, pdf: Path) -> None:
         try:
             run(cmd, timeout=PRINT_TIMEOUT)
         except RenderError as first:
-            if not SANDBOX_TROUBLE.search(str(first)):
+            if not SANDBOX_TROUBLE.search(first.raw or str(first)):
                 raise
             print(f"gdoc: {first}; печатаю без песочницы chromium",
                   file=sys.stderr)
@@ -977,15 +1103,28 @@ def slugify(stem: str) -> str:
     return re.sub(r"[^\w.-]+", "_", stem).strip("._-")[:48] or "doc"
 
 
+def _source_digest() -> str:
+    """Отпечаток собственного кода.
+
+    Правка логики рендера меняет результат так же, как правка CSS, — без
+    этого запись, собранная прежней версией, переиспользовалась бы молча.
+    """
+    try:
+        return hashlib.sha1(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        return "неизвестно"
+
+
 def renderer_fingerprint() -> str:
     """От чего зависит результат, кроме самого документа.
 
     Store-пути конвертеров меняются при их обновлении, вёрстка — при правке
-    CSS и скрипта. Так кэш инвалидируется сам, без счётчика версии, который
-    надо не забыть поднять руками.
+    CSS и скрипта, поведение — при правке кода. Так кэш инвалидируется сам,
+    без счётчика версии, который надо не забыть поднять руками.
     """
     material = "\0".join(
-        [PANDOC, WVHTML, SSCONVERT, CATPPT, ANTIWORD, CHROMIUM, PAGE_CSS, PAGE_JS]
+        [PANDOC, WVHTML, SSCONVERT, CATPPT, ANTIWORD, CHROMIUM,
+         PAGE_CSS, PAGE_JS, _source_digest()]
     )
     return hashlib.sha1(material.encode()).hexdigest()[:12]
 
@@ -997,19 +1136,33 @@ def cache_dir(src: Path) -> Path:
     return cache_root() / f"{slugify(src.stem)}-{digest}"
 
 
-def prune_cache(keep: int = CACHE_KEEP) -> None:
+def prune_cache(keep: int = CACHE_KEEP, protect: Path | None = None) -> None:
+    """Вытеснить лишнее и подобрать за упавшими запусками.
+
+    protect — каталог, которым прямо сейчас пользуется вызывающий: без него
+    параллельный запуск может снести запись между проверкой и печатью.
+    """
     root = cache_root()
     if not root.is_dir():
         return
+    now = time.time()
     entries = []
     for entry in root.iterdir():
-        # Точка — служебное: недособранные каталоги параллельных запусков.
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
         try:
-            entries.append((entry.stat().st_mtime, entry))
+            if not entry.is_dir():
+                continue
+            mtime = entry.stat().st_mtime
         except OSError:
             continue  # каталог убрал другой процесс
+        if entry.name.startswith("."):
+            # Недособранная запись. Живой процесс дочистит её сам, а вот
+            # убитый — уже никогда, поэтому старое подбираем здесь.
+            if now - mtime > STAGING_MAX_AGE:
+                shutil.rmtree(entry, ignore_errors=True)
+            continue
+        if protect is not None and entry == protect:
+            continue
+        entries.append((mtime, entry))
     entries.sort(reverse=True)
     for _, stale in entries[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
@@ -1032,6 +1185,10 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
     # Формат выясняем до всякой работы: на незнакомом расширении незачем
     # трогать кэш и плодить каталоги.
     fmt = pick_format(src)
+    if src.stat().st_size == 0:
+        # Иначе часть конвертеров молча отдаёт пустую страницу и rc=0, и
+        # пользователь получает чистый лист вместо объяснения.
+        raise RenderError("файл пустой")
 
     if force:
         shutil.rmtree(out, ignore_errors=True)
@@ -1049,8 +1206,12 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
                 page(src.name, fmt.kind, body, fmt.wide), "utf-8")
             try:
                 staging.replace(out)
-            except OSError:
-                pass  # нас опередил параллельный запуск — берём его результат
+            except OSError as exc:
+                # Каталог уже занят — нас опередил параллельный запуск, его
+                # результат ничем не хуже. Любая другая причина (кончилось
+                # место, раздел только для чтения) должна быть названа.
+                if exc.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                    raise RenderError(f"не записать в кэш: {exc.strerror}") from None
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
@@ -1063,11 +1224,15 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
         os.utime(out)
     except OSError:
         pass
-    prune_cache()
+    prune_cache(protect=out)
     if not as_pdf:
         return index
 
-    if not pdf.exists() or pdf.stat().st_size == 0:
+    try:
+        ready = pdf.stat().st_size > 0
+    except OSError:
+        ready = False
+    if not ready:
         draft = out / f".tmp-{os.getpid()}.pdf"
         try:
             to_pdf(index, draft)
@@ -1079,6 +1244,28 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
 
 # --------------------------------------------------------------------------
 # командная строка
+
+NOTIFY = tool("GDOC_NOTIFY", "notify-send")
+
+
+def fail(message: str) -> None:
+    """Сообщить об ошибке так, чтобы её увидели.
+
+    Из .desktop stderr не идёт никуда, а двойной клик по документу, который
+    не отрисовался, выглядит как зависшая система. Когда мы не в терминале,
+    дублируем уведомлением.
+    """
+    print(f"gdoc: {message}", file=sys.stderr)
+    if sys.stderr.isatty():
+        return
+    try:
+        subprocess.run(
+            [NOTIFY, "-a", "gdoc", "-u", "critical", "gdoc", message],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass  # уведомлений нет — не беда, в stderr уже написано
+
 
 def looks_like_dir(raw: str) -> bool:
     """Просили каталог? Слэш проверяем по исходной строке.
@@ -1097,7 +1284,7 @@ def export(pdf: Path, src: Path, raw_dest: str, overwrite: bool) -> Path:
     else:
         final = dest if dest.suffix.lower() == ".pdf" else dest.with_name(dest.name + ".pdf")
     if final.exists() and not overwrite:
-        raise RenderError(f"{final} уже есть — перезаписать можно с --force")
+        raise RenderError(f"{final} уже есть — заменить можно с --overwrite")
     final.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(pdf, final)
     return final
@@ -1128,7 +1315,9 @@ def parse_args(argv: list[str] | None) -> tuple[argparse.ArgumentParser, argpars
     # nargs="*", иначе --clean нельзя вызвать без файла, как обещает --help.
     ap.add_argument("files", nargs="*", metavar="ФАЙЛ")
     ap.add_argument("-f", "--force", action="store_true",
-                    help="перерисовать мимо кэша, а с --out ещё и перезаписать")
+                    help="перерисовать мимо кэша")
+    ap.add_argument("-y", "--overwrite", action="store_true",
+                    help="с --out: заменить файл, если он уже есть")
     ap.add_argument("-p", "--path", action="store_true",
                     help="напечатать путь в кэше, не открывать")
     ap.add_argument("-o", "--out", metavar="КУДА",
@@ -1174,20 +1363,19 @@ def main(argv: list[str] | None = None) -> int:
         # и относительное имя разрешалось бы уже от него.
         src = Path(os.path.abspath(os.path.expanduser(name)))
         if not src.is_file():
-            print(f"gdoc: не файл: {src}", file=sys.stderr)
+            fail(f"не файл: {src}")
             rc = 1
             continue
         try:
             ready.append((src, build(src, args.force, as_pdf=not args.html)))
         except RenderError as exc:
-            print(f"gdoc: {src.name}: {exc}", file=sys.stderr)
+            fail(f"{src.name}: {exc}")
             rc = 1
         except OSError as exc:
-            print(f"gdoc: {src.name}: {exc.strerror or exc}", file=sys.stderr)
+            fail(f"{src.name}: {exc.strerror or exc}")
             rc = 1
         except Exception as exc:  # noqa: BLE001 — показать причину, а не трейс
-            print(f"gdoc: {src.name}: не удалось прочитать файл ({exc})",
-                  file=sys.stderr)
+            fail(f"{src.name}: {type(exc).__name__}: {exc}")
             rc = 1
 
     if not ready:
@@ -1196,10 +1384,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         for src, pdf in ready:
             try:
-                print(export(pdf, src, args.out, args.force))
+                print(export(pdf, src, args.out, args.overwrite))
             except (RenderError, OSError) as exc:
                 reason = exc.strerror if isinstance(exc, OSError) else exc
-                print(f"gdoc: не записать из {src.name}: {reason}", file=sys.stderr)
+                fail(f"не записать из {src.name}: {reason}")
                 rc = 1
         return rc
 
@@ -1209,8 +1397,8 @@ def main(argv: list[str] | None = None) -> int:
         return rc
 
     program, argv_for = launcher(args)
-    if shutil.which(program) is None and not Path(program).is_file():
-        print(f"gdoc: не найдена программа {program}", file=sys.stderr)
+    if shutil.which(program) is None and not os.access(program, os.X_OK):
+        fail(f"не найдена программа {program}")
         return 1
     for _, target in ready:
         subprocess.Popen(

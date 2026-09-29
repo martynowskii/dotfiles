@@ -24,22 +24,13 @@ let
     export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${pkgs.chromium}/bin/chromium}
     export GDOC_BROWSER=''${GDOC_BROWSER:-${pkgs.chromium}/bin/chromium}
     export GDOC_VIEWER=''${GDOC_VIEWER:-${pkgs.zathura}/bin/zathura}
+    # Из .desktop stderr не видно, поэтому об ошибке говорим уведомлением.
+    export GDOC_NOTIFY=${pkgs.libnotify}/bin/notify-send
     exec ${pkgs.python3}/bin/python3 ${../gdoc/gdoc.py} "$@"
   '';
 
-  # Список продублирован в mime.nix: xdg.mimeApps.defaultApplications —
-  # отдельная опция home-manager, из этой её не заполнить.
-  documentMimes = [
-    "application/msword"
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    "application/vnd.oasis.opendocument.text"
-    "application/rtf"
-    "application/vnd.ms-excel"
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    "application/vnd.oasis.opendocument.spreadsheet"
-    "application/vnd.ms-powerpoint"
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-  ];
+  documentMimes = import ../gdoc/mimes.nix;
+
 in
 {
   home.packages = [ gdoc ];
