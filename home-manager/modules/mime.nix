@@ -65,7 +65,7 @@ in
       "application/epub+zip" = "org.pwmt.zathura.desktop";
       "image/vnd.djvu" = "org.pwmt.zathura.desktop";
 
-      # gdoc рендерит документ в HTML и открывает в chromium (см. gdoc.nix).
+      # gdoc рендерит документ в PDF и открывает в zathura (см. gdoc.nix).
       # doc-reader остаётся под рукой как быстрый текстовый просмотр.
       "application/msword" = "gdoc.desktop";
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =

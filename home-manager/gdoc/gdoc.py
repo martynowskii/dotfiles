@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gdoc — рендерит офисные документы в HTML и открывает их в браузере.
+"""gdoc — рендерит офисные документы в PDF и открывает их в zathura.
 
 Конвертеры подбираются по расширению: pandoc для OOXML/ODF, wvHtml для
 старого .doc, ssconvert для таблиц, свой обход XML для .pptx. Результат
@@ -20,7 +20,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # Кэш инвалидируется целиком при смене версии — поднимать при правках рендера.
-RENDERER = "6"
+RENDERER = "9"
 
 NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -49,6 +49,9 @@ WVHTML = tool("GDOC_WVHTML", "wvHtml")
 SSCONVERT = tool("GDOC_SSCONVERT", "ssconvert")
 CATPPT = tool("GDOC_CATPPT", "catppt")
 ANTIWORD = tool("GDOC_ANTIWORD", "antiword")
+# chromium ищем в PATH, а не прибиваем к store: система уже ставит его
+# системным пакетом, и второй такой же в замыкании не нужен.
+CHROMIUM = tool("GDOC_CHROMIUM", "chromium")
 
 
 class RenderError(Exception):
@@ -116,6 +119,7 @@ caption {
 }
 pre { overflow-x: auto; }
 math { font-size: 1.05em; }
+.mathfit { display: block; overflow: hidden; }
 .note {
   margin: 1.2rem 0;
   padding: .7rem 1rem;
@@ -151,19 +155,91 @@ math { font-size: 1.05em; }
   .topbar b { color: #e6e7ea; }
   .topbar .kind { background: #2c2e34; }
 }
+/* Печать в PDF: поля рисует @page, экранная «бумага» тут только мешает. */
+@media print {
+  body { background: #fff; padding: 0; }
+  .topbar { display: none; }
+  .sheet {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+  img, tr, .note, .gallery img { break-inside: avoid; }
+  table { font-size: .85em; }
+  .slide {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    break-inside: avoid;
+    break-after: page;
+  }
+  .slide:last-child { break-after: auto; }
+  .slide > .num { color: #82868f; }
+}
+"""
+
+
+# MathML не переносится по строкам, и длинные выражения уезжают за правое
+# поле страницы. Ужимаем такие формулы до ширины колонки: пересчёт висит и
+# на beforeprint, потому что при печати ширина страницы другая, чем на экране.
+PAGE_JS = """
+function fitMath() {
+  document.querySelectorAll('math').forEach(function (m) {
+    var holder = m.parentElement &&
+      m.parentElement.classList.contains('mathfit') ? m.parentElement : null;
+    m.style.transform = '';
+    m.style.display = '';
+    m.style.width = '';
+    if (holder) holder.style.height = '';
+
+    var host = holder ? holder.parentElement : m.parentElement;
+    var avail = host ? host.clientWidth : 0;
+    // Блочный <math> отдаёт в rect ширину контейнера, а не содержимого,
+    // поэтому настоящую ширину спрашиваем через max-content.
+    m.style.display = 'inline-block';
+    m.style.width = 'max-content';
+    var r = m.getBoundingClientRect();
+
+    if (!avail || !r.width || r.width <= avail) {
+      m.style.display = '';
+      m.style.width = '';
+      return;
+    }
+    var s = avail / r.width;
+    if (!holder) {
+      holder = document.createElement('span');
+      holder.className = 'mathfit';
+      m.parentNode.insertBefore(holder, m);
+      holder.appendChild(m);
+    }
+    holder.style.height = (r.height * s) + 'px';
+    m.style.transformOrigin = 'left top';
+    m.style.transform = 'scale(' + s + ')';
+  });
+}
+addEventListener('load', fitMath);
+addEventListener('beforeprint', fitMath);
 """
 
 
 def page(title, kind, body, wide=False):
     w = " topbar--wide" if wide else ""
     s = " sheet--wide" if wide else ""
+    # Широкие таблицы иначе обрезаются по правому краю страницы.
+    orient = "A4 landscape" if wide else "A4"
     return (
         '<!DOCTYPE html>\n<html lang="ru"><head><meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{html.escape(title)}</title>\n<style>{PAGE_CSS}</style></head>\n"
+        f"<title>{html.escape(title)}</title>\n"
+        f"<style>{PAGE_CSS}@page {{ size: {orient}; margin: 15mm 14mm; }}</style>"
+        "</head>\n"
         f'<body>\n<div class="topbar{w}"><b>{html.escape(title)}</b>'
         f'<span class="kind">{html.escape(kind)}</span></div>\n'
-        f'<main class="sheet{s}">\n{body}\n</main>\n</body></html>\n'
+        f'<main class="sheet{s}">\n{body}\n</main>\n'
+        f"<script>{PAGE_JS}</script>\n</body></html>\n"
     )
 
 
@@ -510,6 +586,42 @@ def pick_renderer(src):
 
 
 # --------------------------------------------------------------------------
+# печать
+
+def to_pdf(index, pdf):
+    """Напечатать готовую страницу в PDF headless-хромиумом.
+
+    Он уже стоит в системе и умеет и MathML, и картинки, так что отдельный
+    html2pdf-движок не нужен. Профиль — свой, чтобы не драться за блокировку
+    с обычным окном браузера.
+    """
+    profile = cache_root() / ".chromium"
+    profile.mkdir(parents=True, exist_ok=True)
+    base = [
+        CHROMIUM,
+        "--headless",
+        "--disable-gpu",
+        f"--user-data-dir={profile}",
+        "--virtual-time-budget=20000",  # дать дорисоваться картинкам и формулам
+        "--no-pdf-header-footer",
+        f"--print-to-pdf={pdf}",
+        f"file://{index}",
+    ]
+    attempts = [base, base[:1] + ["--no-sandbox"] + base[1:]]
+    last = ""
+    for cmd in attempts:
+        try:
+            run(cmd, timeout=180)
+        except RenderError as exc:
+            last = str(exc)
+        except subprocess.TimeoutExpired:
+            last = "chromium не уложился в 180 с"
+        if pdf.exists() and pdf.stat().st_size > 0:
+            return
+    raise RenderError(f"не удалось напечатать PDF ({last or 'пустой файл'})")
+
+
+# --------------------------------------------------------------------------
 # кэш
 
 def cache_root():
@@ -517,52 +629,68 @@ def cache_root():
     return Path(base) / "gdoc"
 
 
+def slugify(stem):
+    return re.sub(r"[^\w.-]+", "_", stem).strip(".")[:48] or "doc"
+
+
 def cache_dir(src):
     st = src.stat()
     key = f"{RENDERER}|{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
     digest = hashlib.sha1(key.encode()).hexdigest()[:16]
-    slug = re.sub(r"[^\w.-]+", "_", src.stem)[:48] or "doc"
-    return cache_root() / f"{slug}-{digest}"
+    return cache_root() / f"{slugify(src.stem)}-{digest}"
 
 
 def prune_cache(keep=40):
     root = cache_root()
     if not root.is_dir():
         return
-    dirs = sorted((d for d in root.iterdir() if d.is_dir()),
+    # .chromium — профиль для печати, он не документ и чистке не подлежит.
+    dirs = sorted((d for d in root.iterdir() if d.is_dir() and d.name[0] != "."),
                   key=lambda d: d.stat().st_mtime, reverse=True)
     for stale in dirs[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
 
 
-def build(src, force=False):
+def build(src, force=False, as_pdf=True):
     out = cache_dir(src)
     index = out / "index.html"
-    if index.exists() and not force:
+    # Имя PDF видно в заголовке zathura, поэтому берём его от исходника.
+    pdf = out / f"{slugify(src.stem)}.pdf"
+
+    if force or not index.exists():
+        render, kind = pick_renderer(src)
+        if out.exists():
+            shutil.rmtree(out)
+        out.mkdir(parents=True)
+        try:
+            body, wide = render(src, out)
+            index.write_text(page(src.name, kind, body, wide), "utf-8")
+        except Exception:
+            shutil.rmtree(out, ignore_errors=True)
+            raise
+        prune_cache()
+
+    if not as_pdf:
         return index
-    render, kind = pick_renderer(src)
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
-    try:
-        body, wide = render(src, out)
-        index.write_text(page(src.name, kind, body, wide), "utf-8")
-    except Exception:
-        shutil.rmtree(out, ignore_errors=True)
-        raise
-    prune_cache()
-    return index
+    if force or not pdf.exists():
+        to_pdf(index, pdf)
+    return pdf
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="gdoc",
-        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt в браузере.",
+        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt в zathura.",
     )
     ap.add_argument("files", nargs="+", metavar="ФАЙЛ")
     ap.add_argument("-f", "--force", action="store_true", help="перерисовать, игнорируя кэш")
     ap.add_argument("-p", "--path", action="store_true", help="напечатать путь, не открывать")
-    ap.add_argument("-b", "--browser", default=os.environ.get("GDOC_BROWSER", "chromium"))
+    ap.add_argument("--html", action="store_true",
+                    help="не печатать PDF, а открыть HTML в браузере")
+    ap.add_argument("-v", "--viewer", default=os.environ.get("GDOC_VIEWER", "zathura"),
+                    help="чем смотреть PDF (по умолчанию zathura)")
+    ap.add_argument("-b", "--browser", default=os.environ.get("GDOC_BROWSER", "chromium"),
+                    help="чем открывать --html")
     ap.add_argument("--clean", action="store_true", help="очистить кэш и выйти")
     args = ap.parse_args(argv)
 
@@ -580,7 +708,7 @@ def main(argv=None):
             rc = 1
             continue
         try:
-            targets.append(build(src, args.force))
+            targets.append(build(src, args.force, as_pdf=not args.html))
         except RenderError as exc:
             print(f"gdoc: {src.name}: {exc}", file=sys.stderr)
             rc = 1
@@ -595,11 +723,19 @@ def main(argv=None):
             print(t)
         return rc
 
-    browser = shutil.which(args.browser) or args.browser
+    if args.html:
+        browser = shutil.which(args.browser) or args.browser
+        launch = lambda t: (  # noqa: E731
+            [browser, f"--app=file://{t}"] if "chrom" in Path(browser).name
+            else [browser, f"file://{t}"]
+        )
+    else:
+        viewer = shutil.which(args.viewer) or args.viewer
+        launch = lambda t: [viewer, str(t)]  # noqa: E731
+
     for t in targets:
         subprocess.Popen(
-            [browser, f"--app=file://{t}"] if "chrom" in Path(browser).name
-            else [browser, f"file://{t}"],
+            launch(t),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
