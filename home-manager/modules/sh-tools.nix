@@ -1,8 +1,6 @@
-{ pkgs, ... }:
+{ ... }:
 
 {
-  home.packages = [ pkgs.yazi ];
-
   programs.tmux = {
     enable = true;
     keyMode = "vi";
