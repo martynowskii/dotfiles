@@ -66,7 +66,10 @@ in
       "image/vnd.djvu" = "org.pwmt.zathura.desktop";
 
       # gdoc рендерит документ в PDF и открывает в zathura (см. gdoc.nix).
-      # doc-reader остаётся под рукой как быстрый текстовый просмотр.
+      # doc-reader дефолтом больше нигде не стоит и остаётся только как
+      # команда в терминале — быстро заглянуть в .doc без рендера.
+      # text/csv сюда намеренно не входит: это обычный текст, и правят его
+      # чаще, чем читают, так что он остаётся за nvim через text/plain.
       "application/msword" = "gdoc.desktop";
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =
         "gdoc.desktop";
@@ -77,7 +80,6 @@ in
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" =
         "gdoc.desktop";
       "application/vnd.oasis.opendocument.spreadsheet" = "gdoc.desktop";
-      "text/csv" = "gdoc.desktop";
 
       "application/vnd.ms-powerpoint" = "gdoc.desktop";
       "application/vnd.openxmlformats-officedocument.presentationml.presentation" =

@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 """gdoc — рендерит офисные документы в PDF и открывает их в zathura.
 
-Конвертеры подбираются по расширению: pandoc для OOXML/ODF/markdown, wvHtml для
-старого .doc, ssconvert для таблиц, свой обход XML для .pptx. Результат
-складывается в кэш и переиспользуется, пока файл не изменился.
+Конвертер выбирается по расширению (см. FORMATS): pandoc для OOXML/ODF и
+markdown, wvHtml для старого .doc, ssconvert для таблиц, свой обход XML для
+.pptx. Все они дают HTML, его печатает в PDF headless-chromium.
+
+Разметку от конвертеров нельзя считать доверенной: pandoc пропускает сырой
+HTML из markdown и epub насквозь, так что документ может принести <script>,
+<iframe file://> и onerror=. Поэтому чужой HTML проходит через sanitize(), а
+chromium печатает с отключённой сетью. Свой скрипт (подгонка формул)
+добавляется уже после очистки.
+
+Готовое складывается в кэш и переиспользуется, пока не изменился ни файл, ни
+сам рендер. Публикация атомарная — параллельные запуски не мешают друг другу
+и не оставляют недособранных записей.
 """
+
+from __future__ import annotations
 
 import argparse
 import csv
@@ -15,34 +27,35 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
+from typing import Callable, Iterable, NamedTuple
 from xml.etree import ElementTree as ET
-
-# Кэш инвалидируется целиком при смене версии — поднимать при правках рендера.
-RENDERER = "9"
 
 NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
     "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-    "pr": "http://schemas.openxmlformats.org/package/2006/relationships",
 }
 
-PANDOC_FORMATS = {
-    ".docx": "docx",
-    ".odt": "odt",
-    ".rtf": "rtf",
-    ".epub": "epub",
-    ".fb2": "fb2",
-    # Читатель pandoc'а, а не gfm: таблицы и $math$ он понимает из коробки.
-    ".md": "markdown",
-    ".markdown": "markdown",
-}
-SHEET_EXTS = {".xlsx", ".xls", ".ods", ".csv", ".tsv", ".gnumeric", ".xlsm"}
+# Ячейка CSV может быть длиннее дефолтных 128 КБ — иначе csv.reader бросает
+# Error и лист не открывается вовсе.
+csv.field_size_limit(16 * 1024 * 1024)
+
+# Сколько собранных документов держим в кэше.
+CACHE_KEEP = 40
+# Выше этого лист обрезается: PDF на сто тысяч строк бесполезен и собирается
+# минутами.
+MAX_ROWS = 5000
+# Конвертеры иногда зависают на битом вводе. Из .desktop такой процесс уходит
+# в фон навсегда, поэтому у каждого запуска есть потолок.
+RUN_TIMEOUT = 300
+PRINT_TIMEOUT = 180
 
 
-def tool(env_var, name):
+def tool(env_var: str, name: str) -> str:
     """Путь до утилиты: из окружения (его задаёт nix-обёртка) либо из PATH."""
     return os.environ.get(env_var) or shutil.which(name) or name
 
@@ -52,13 +65,159 @@ WVHTML = tool("GDOC_WVHTML", "wvHtml")
 SSCONVERT = tool("GDOC_SSCONVERT", "ssconvert")
 CATPPT = tool("GDOC_CATPPT", "catppt")
 ANTIWORD = tool("GDOC_ANTIWORD", "antiword")
-# chromium ищем в PATH, а не прибиваем к store: система уже ставит его
-# системным пакетом, и второй такой же в замыкании не нужен.
 CHROMIUM = tool("GDOC_CHROMIUM", "chromium")
 
 
 class RenderError(Exception):
-    pass
+    """Ошибка, которую можно показать пользователю одной строкой."""
+
+
+# --------------------------------------------------------------------------
+# очистка чужого HTML
+
+class _Sanitizer(HTMLParser):
+    """Выбрасывает из разметки всё активное, оставляя оформление.
+
+    Денилист, а не аллоулист: конвертеры отдают произвольные теги оформления
+    и весь MathML, перечислить их заранее нельзя. Опасного же — конечный
+    список, и он ниже.
+    """
+
+    # Тег и всё его содержимое.
+    DROP_TREE = frozenset({
+        "script", "style", "noscript", "template", "iframe", "frame",
+        "frameset", "object", "embed", "applet", "form", "title", "portal",
+    })
+    # Сам тег выбрасываем, детей оставляем.
+    DROP_TAG = frozenset({
+        "html", "head", "body", "base", "link", "meta", "input", "button",
+        "textarea", "select", "option",
+    })
+    VOID = frozenset({
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr",
+    })
+    URL_ATTRS = frozenset({
+        "src", "href", "poster", "data", "action", "background",
+        "formaction", "xlink:href", "longdesc", "cite", "profile", "manifest",
+    })
+    # srcset — список ссылок со своим синтаксисом; разбирать его ради
+    # конвертеров, которые его не выдают, смысла нет.
+    DROP_ATTRS = frozenset({"srcset", "imagesrcset", "ping", "target"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.out: list[str] = []
+        self.open_tags: list[str] = []
+        self.suppress = 0
+
+    # -- атрибуты -------------------------------------------------------
+
+    @staticmethod
+    def _safe_url(value: str) -> str | None:
+        """Пропускаем только то, что не ходит наружу и не исполняется."""
+        v = value.strip()
+        if not v:
+            return None
+        low = v.lower()
+        if low.startswith("data:image/"):
+            return v
+        if low.startswith("//"):  # протокол-относительная ссылка — тоже сеть
+            return None
+        head = v.split("/", 1)[0]
+        if ":" in head:  # http:, file:, javascript:, data:<не картинка>
+            return None
+        return v
+
+    @staticmethod
+    def _safe_style(value: str) -> str | None:
+        low = value.lower()
+        if "url(" in low or "expression(" in low or "@import" in low:
+            return None
+        return value
+
+    def _attrs(self, attrs: Iterable[tuple[str, str | None]]) -> str:
+        parts = []
+        for name, value in attrs:
+            name = name.lower()
+            if name.startswith("on") or name in self.DROP_ATTRS:
+                continue
+            if value is None:
+                parts.append(f" {html.escape(name, quote=True)}")
+                continue
+            if name in self.URL_ATTRS:
+                checked = self._safe_url(value)
+            elif name == "style":
+                checked = self._safe_style(value)
+            else:
+                checked = value
+            if checked is None:
+                continue
+            parts.append(f' {html.escape(name, quote=True)}="{html.escape(checked, quote=True)}"')
+        return "".join(parts)
+
+    # -- обход ----------------------------------------------------------
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if self.suppress:
+            if tag in self.DROP_TREE:
+                self.suppress += 1
+            return
+        if tag in self.DROP_TREE:
+            self.suppress = 1
+            return
+        if tag in self.DROP_TAG:
+            return
+        self.out.append(f"<{tag}{self._attrs(attrs)}>")
+        if tag not in self.VOID:
+            self.open_tags.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        if self.suppress or tag in self.DROP_TREE or tag in self.DROP_TAG:
+            return
+        self.out.append(f"<{tag}{self._attrs(attrs)}/>")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.suppress:
+            if tag in self.DROP_TREE:
+                self.suppress -= 1
+            return
+        if tag in self.DROP_TAG or tag in self.VOID:
+            return
+        if tag not in self.open_tags:
+            return  # закрытие без открытия — выбрасываем
+        # Закрываем всё, что осталось незакрытым внутри: иначе чужая
+        # несбалансированная разметка растащит вёрстку всей страницы.
+        while self.open_tags:
+            current = self.open_tags.pop()
+            self.out.append(f"</{current}>")
+            if current == tag:
+                break
+
+    def handle_data(self, data: str) -> None:
+        if not self.suppress:
+            self.out.append(html.escape(data, quote=False))
+
+    def handle_entityref(self, name: str) -> None:
+        if not self.suppress:
+            self.out.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if not self.suppress:
+            self.out.append(f"&#{name};")
+
+    def result(self) -> str:
+        while self.open_tags:
+            self.out.append(f"</{self.open_tags.pop()}>")
+        return "".join(self.out)
+
+
+def sanitize(markup: str) -> str:
+    """Очистить разметку конвертера перед вставкой в страницу."""
+    parser = _Sanitizer()
+    parser.feed(markup)
+    parser.close()
+    return parser.result()
 
 
 # --------------------------------------------------------------------------
@@ -141,6 +300,9 @@ math { font-size: 1.05em; }
   color: #82868f;
 }
 .slide h2 { margin-top: 0; }
+.lvl1 { margin-left: 1.5rem; }
+.lvl2 { margin-left: 3rem; }
+.lvl3 { margin-left: 4.5rem; }
 .gallery { display: flex; flex-wrap: wrap; gap: .8rem; }
 .gallery img {
   max-width: 20rem;
@@ -228,9 +390,10 @@ addEventListener('beforeprint', fitMath);
 """
 
 
-def page(title, kind, body, wide=False):
-    w = " topbar--wide" if wide else ""
-    s = " sheet--wide" if wide else ""
+def page(title: str, kind: str, body: str, wide: bool = False) -> str:
+    """Собрать страницу вокруг уже очищенной разметки документа."""
+    topbar_mod = " topbar--wide" if wide else ""
+    sheet_mod = " sheet--wide" if wide else ""
     # Широкие таблицы иначе обрезаются по правому краю страницы.
     orient = "A4 landscape" if wide else "A4"
     return (
@@ -239,194 +402,262 @@ def page(title, kind, body, wide=False):
         f"<title>{html.escape(title)}</title>\n"
         f"<style>{PAGE_CSS}@page {{ size: {orient}; margin: 15mm 14mm; }}</style>"
         "</head>\n"
-        f'<body>\n<div class="topbar{w}"><b>{html.escape(title)}</b>'
+        f'<body>\n<div class="topbar{topbar_mod}"><b>{html.escape(title)}</b>'
         f'<span class="kind">{html.escape(kind)}</span></div>\n'
-        f'<main class="sheet{s}">\n{body}\n</main>\n'
+        f'<main class="sheet{sheet_mod}">\n{body}\n</main>\n'
         f"<script>{PAGE_JS}</script>\n</body></html>\n"
     )
 
 
-BODY_RE = re.compile(r"<body[^>]*>(.*)</body>", re.S | re.I)
-STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.S | re.I)
-COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+def note(text: str) -> str:
+    return f'<p class="note">{html.escape(text)}</p>\n'
 
 
-def body_of(markup):
-    """Вытащить содержимое <body>, отбросив чужие стили."""
-    m = BODY_RE.search(markup)
-    return STYLE_RE.sub("", m.group(1) if m else markup)
-
-
-def run(cmd, **kw):
+def run(cmd: list[str], timeout: int = RUN_TIMEOUT, **kw) -> bytes:
+    """Запустить конвертер, превратив падение в читаемую RenderError."""
     kw.setdefault("stdout", subprocess.PIPE)
     kw.setdefault("stderr", subprocess.PIPE)
-    proc = subprocess.run(cmd, **kw)
+    name = Path(cmd[0]).name
+    try:
+        proc = subprocess.run(cmd, timeout=timeout, **kw)
+    except FileNotFoundError:
+        raise RenderError(f"не найдена программа {name}") from None
+    except subprocess.TimeoutExpired:
+        raise RenderError(f"{name} не уложился в {timeout} с") from None
     if proc.returncode != 0:
-        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
-        raise RenderError(f"{Path(cmd[0]).name}: {err.splitlines()[-1] if err else 'код ' + str(proc.returncode)}")
+        raise RenderError(f"{name}: {_why(proc.stderr, proc.returncode)}")
     return proc.stdout or b""
+
+
+def _why(stderr: bytes | None, code: int) -> str:
+    """Последние осмысленные строки вывода — без шума окружения."""
+    text = (stderr or b"").decode("utf-8", "replace")
+    lines = [
+        line.strip() for line in text.splitlines()
+        if line.strip() and "dconf" not in line and "dbus" not in line
+    ]
+    # У pandoc последняя строка — служебная ссылка на исходники GHC,
+    # полезное лежит выше.
+    lines = [line for line in lines if "called at libraries/" not in line]
+    return "; ".join(lines[-2:]) if lines else f"код {code}"
 
 
 # --------------------------------------------------------------------------
 # картинки из бинарных форматов
 
-def extract_blobs(data, outdir):
+# Ниже этого JPEG почти наверняка не картинка документа, а превью-иконка или
+# случайное совпадение сигнатуры.
+MIN_JPEG = 1024
+
+
+def _png_end(data: bytes, start: int) -> int | None:
+    """Конец PNG, если от start начинается корректная цепочка чанков."""
+    n = len(data)
+    i = start + 8
+    while i + 8 <= n:
+        length = int.from_bytes(data[i:i + 4], "big")
+        kind = data[i + 4:i + 8]
+        nxt = i + 8 + length + 4
+        if length < 0 or nxt > n:
+            return None
+        if kind == b"IEND":
+            return nxt
+        i = nxt
+    return None
+
+
+def _jpeg_end(data: bytes, start: int) -> int | None:
+    """Конец JPEG, если от start начинается корректная цепочка сегментов."""
+    n = len(data)
+    # Сигнатура — это FF D8 FF, где третий байт уже начало первого сегмента.
+    # Сразу за ним обязан идти код маркера; если там мусор, значит совпали
+    # случайные три байта, а не начало картинки.
+    if start + 4 > n or not 0xC0 <= data[start + 3] <= 0xFE:
+        return None
+    i = start + 2
+    while i + 4 <= n:
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xD9:
+            return i + 2
+        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seg = int.from_bytes(data[i + 2:i + 4], "big")
+        if seg < 2:
+            return None
+        if marker == 0xDA:  # начало данных — ищем следующий не-restart маркер
+            i += 2 + seg
+            while i + 1 < n and not (
+                data[i] == 0xFF and data[i + 1] != 0x00
+                and not 0xD0 <= data[i + 1] <= 0xD7
+            ):
+                i += 1
+            continue
+        i += 2 + seg
+    return None
+
+
+def extract_blobs(data: bytes, outdir: Path) -> list[str]:
     """Выдрать PNG/JPEG из бинарного .doc/.ppt по сигнатурам.
 
     wv и catdoc не умеют распаковывать Escher-блобы, но сами картинки лежат
-    в файле целиком, так что их можно найти по заголовкам и границам.
+    в файле целиком. Ищем сигнатуры и проверяем, что за ними идёт валидная
+    структура: без проверки из случайного шума достаётся мусорный «JPEG», а
+    он потом сдвигает все остальные картинки документа на одну позицию.
     """
-    found = []
-    i, n = 0, len(data)
-    while i < n:
-        if data.startswith(b"\x89PNG\r\n\x1a\n", i):
-            j, ok = i + 8, False
-            while j + 8 <= n:
-                ln = int.from_bytes(data[j:j + 4], "big")
-                typ = data[j + 4:j + 8]
-                if ln > n:
-                    break
-                j += 8 + ln + 4
-                if typ == b"IEND":
-                    ok = True
-                    break
-            if ok:
-                found.append(("png", data[i:j]))
-                i = j
+    found: list[tuple[str, bytes]] = []
+    png_sig = b"\x89PNG\r\n\x1a\n"
+    jpeg_sig = b"\xff\xd8\xff"
+    i = 0
+    while i < len(data):
+        nxt_png = data.find(png_sig, i)
+        nxt_jpeg = data.find(jpeg_sig, i)
+        candidates = [p for p in (nxt_png, nxt_jpeg) if p != -1]
+        if not candidates:
+            break
+        start = min(candidates)
+        if start == nxt_png:
+            end = _png_end(data, start)
+            if end is not None:
+                found.append(("png", data[start:end]))
+                i = end
                 continue
-        if data.startswith(b"\xff\xd8\xff", i):
-            j, ok = i + 2, False
-            while j + 4 <= n:
-                if data[j] != 0xFF:
-                    j += 1
-                    continue
-                m = data[j + 1]
-                if m == 0xD9:
-                    j += 2
-                    ok = True
-                    break
-                if m in (0x01, 0xD8) or 0xD0 <= m <= 0xD7:
-                    j += 2
-                    continue
-                if m == 0xDA:  # начало данных — до следующего не-restart маркера
-                    j += 2 + int.from_bytes(data[j + 2:j + 4], "big")
-                    while j + 1 < n and not (
-                        data[j] == 0xFF and data[j + 1] != 0x00
-                        and not 0xD0 <= data[j + 1] <= 0xD7
-                    ):
-                        j += 1
-                    continue
-                j += 2 + int.from_bytes(data[j + 2:j + 4], "big")
-            if ok and j - i > 1000:  # мелочь — это чаще всего превью-иконки
-                found.append(("jpg", data[i:j]))
-                i = j
+        else:
+            end = _jpeg_end(data, start)
+            if end is not None and end - start >= MIN_JPEG:
+                found.append(("jpg", data[start:end]))
+                i = end
                 continue
-        i += 1
+        i = start + 1
 
     outdir.mkdir(parents=True, exist_ok=True)
     names = []
-    for k, (ext, blob) in enumerate(found, 1):
-        name = f"img{k:03d}.{ext}"
+    for index, (ext, blob) in enumerate(found, 1):
+        name = f"img{index:03d}.{ext}"
         (outdir / name).write_bytes(blob)
         names.append(f"media/{name}")
     return names
 
 
-def gallery(names, heading):
+def gallery(names: list[str], heading: str) -> str:
     if not names:
         return ""
     imgs = "".join(f'<img src="{html.escape(n)}" alt="">' for n in names)
-    return f'<h2>{html.escape(heading)}</h2>\n<div class="gallery">{imgs}</div>\n'
+    return f"<h2>{html.escape(heading)}</h2>\n<div class=\"gallery\">{imgs}</div>\n"
 
 
 # --------------------------------------------------------------------------
-# рендереры
+# рендереры: каждый кладёт вспомогательные файлы в outdir и возвращает HTML
 
-def render_pandoc(src, outdir, fmt):
+def render_pandoc(src: Path, outdir: Path, fmt: str) -> str:
+    """Форматы, которые pandoc читает сам.
+
+    --resource-path нужен, потому что pandoc работает из каталога кэша:
+    без него относительная ![](pic.png) из markdown молча теряется.
+    """
     markup = run(
         [PANDOC, "-f", fmt, "-t", "html5", "--mathml",
-         "--extract-media=media", "-o", "-", str(src)],
+         f"--resource-path={src.parent}", "--extract-media=media",
+         "-o", "-", str(src)],
         cwd=outdir,
     ).decode("utf-8", "replace")
-    return markup, False
+    return sanitize(markup)
 
 
 STRANGE_IMG = re.compile(r'<img\b[^>]*src="StrangeNoGraphicData"[^>]*>', re.I)
 
 
-def render_doc(src, outdir):
-    """Старый .doc: структура от wvHtml, картинки — из блобов."""
-    work = outdir / "wv"
-    work.mkdir(parents=True, exist_ok=True)
-    target = work / "doc.html"
-    try:
-        run([WVHTML, "--charset=utf-8", f"--targetdir={work}", str(src), str(target)])
-        markup = target.read_text("utf-8", "replace")
-    except (RenderError, FileNotFoundError):
-        text = run([ANTIWORD, "-m", "UTF-8.txt", str(src)]).decode("utf-8", "replace")
-        paras = "".join(f"<p>{html.escape(p)}</p>\n" for p in text.split("\n\n") if p.strip())
-        markup = f"<body>{paras}</body>"
+def render_doc(src: Path, outdir: Path) -> str:
+    """Старый .doc: структура от wvHtml, картинки — из блобов.
 
-    # В хвосте wvHtml прячет свои баннеры в комментарии — они только мешают.
-    body = COMMENT_RE.sub("", body_of(markup))
+    wvHtml пишется прямо в outdir: свои извлечённые картинки он кладёт рядом
+    с html и ссылается на них относительно, а index.html лежит тут же.
+    """
+    target = outdir / "wv.html"
+    try:
+        run([WVHTML, "--charset=utf-8", f"--targetdir={outdir}",
+             str(src), str(target)])
+        markup = target.read_text("utf-8", "replace")
+    except RenderError:
+        text = run([ANTIWORD, "-m", "UTF-8.txt", str(src)]).decode("utf-8", "replace")
+        markup = "".join(
+            f"<p>{html.escape(p)}</p>\n" for p in text.split("\n\n") if p.strip()
+        )
+    finally:
+        target.unlink(missing_ok=True)
+
+    body = sanitize(markup)
     names = extract_blobs(src.read_bytes(), outdir / "media")
 
     # wvHtml оставляет плейсхолдеры в нужных местах — подставляем по порядку.
     slots = len(STRANGE_IMG.findall(body))
     pool = iter(names)
 
-    def swap(_m):
+    def swap(_match: re.Match[str]) -> str:
         nxt = next(pool, None)
         if nxt is None:
-            return '<p class="note">картинка не извлеклась</p>'
+            return note("картинка не извлеклась")
         return f'<img src="{html.escape(nxt)}" alt="">'
 
     body = STRANGE_IMG.sub(swap, body)
     leftover = list(pool)
 
-    notes = ""
+    head = ""
     if slots and len(names) != slots:
-        notes = (
-            f'<p class="note">Картинок в файле найдено {len(names)}, '
-            f"мест под них — {slots}. Часть могла сместиться.</p>\n"
+        head = note(
+            f"Картинок в файле найдено {len(names)}, мест под них — {slots}. "
+            "Часть могла сместиться."
         )
-    return notes + body + gallery(leftover, "Остальные изображения"), False
+    return head + body + gallery(leftover, "Остальные изображения")
 
 
-NUMERIC = re.compile(r"^-?[\d\s]*[.,]?\d+\s*%?$")
-MAX_ROWS = 5000
+def is_number(text: str) -> bool:
+    """Похоже ли содержимое ячейки на число (для выравнивания вправо)."""
+    cleaned = text.strip().rstrip("%").strip().replace("\u00a0", " ")
+    if not cleaned:
+        return False
+    groups = cleaned.split(" ")
+    # Пробел внутри допустим только как разделитель тысяч: «1 000 000».
+    # Иначе «1 2 3» склеилось бы в одно число и уехало вправо целиком.
+    if any(not (g.isdigit() and len(g) == 3) for g in groups[1:]):
+        return False
+    try:
+        float("".join(groups).replace(",", ".", 1))
+    except ValueError:
+        return False
+    return True
 
 
-def _table(rows, caption):
+def _table(rows: list[list[str]], caption: str) -> str:
     width = 0
-    for r in rows:
-        last = max((i for i, c in enumerate(r) if c.strip()), default=-1)
+    for row in rows:
+        last = max((i for i, cell in enumerate(row) if cell.strip()), default=-1)
         width = max(width, last + 1)
-    while rows and not any(c.strip() for c in rows[-1]):
+    while rows and not any(cell.strip() for cell in rows[-1]):
         rows.pop()
     if not width or not rows:
         return f"<h2>{html.escape(caption)}</h2>\n<p>Лист пустой.</p>\n"
 
-    note = ""
+    head = ""
     if len(rows) > MAX_ROWS:
-        note = (
-            f'<p class="note">Показаны первые {MAX_ROWS} строк из {len(rows)}.</p>\n'
-        )
+        head = note(f"Показаны первые {MAX_ROWS} строк из {len(rows)}.")
         rows = rows[:MAX_ROWS]
 
     out = [f"<table><caption>{html.escape(caption)}</caption><tbody>"]
-    for r in rows:
+    for row in rows:
         cells = []
-        for c in (r + [""] * width)[:width]:
-            c = c.strip()
-            cls = ' class="n"' if c and NUMERIC.match(c) else ""
-            cells.append(f"<td{cls}>{html.escape(c)}</td>")
+        for cell in (row + [""] * width)[:width]:
+            cell = cell.strip()
+            cls = ' class="n"' if is_number(cell) else ""
+            cells.append(f"<td{cls}>{html.escape(cell)}</td>")
         out.append("<tr>" + "".join(cells) + "</tr>")
     out.append("</tbody></table>")
-    return note + "\n".join(out) + "\n"
+    return head + "\n".join(out) + "\n"
 
 
-def render_sheet(src, outdir):
+def render_sheet(src: Path, outdir: Path) -> str:
     """Таблицы идём через CSV, а не через HTML-экспортёр gnumeric.
 
     Тот подгоняет текст под ширину колонки и молча округляет: 25 в узком
@@ -435,54 +666,95 @@ def render_sheet(src, outdir):
     """
     work = outdir / "csv"
     work.mkdir(parents=True, exist_ok=True)
-    run([SSCONVERT, "-S", "-T", "Gnumeric_stf:stf_csv", str(src), str(work / "%n-%s.csv")],
-        stderr=subprocess.DEVNULL)
+    try:
+        run([SSCONVERT, "-S", "-T", "Gnumeric_stf:stf_csv",
+             str(src), str(work / "%n-%s.csv")])
 
-    files = sorted(work.glob("*.csv"), key=lambda p: int(p.name.split("-", 1)[0]))
-    if not files:
-        raise RenderError("gnumeric не отдал ни одного листа")
+        def order(path: Path) -> tuple[int, str]:
+            prefix, _, _ = path.name.partition("-")
+            return (int(prefix) if prefix.isdigit() else 1 << 30, path.name)
 
-    parts = []
-    for f in files:
-        name = f.name.split("-", 1)[1].removesuffix(".csv")
-        with f.open(newline="", encoding="utf-8", errors="replace") as fh:
-            parts.append(_table(list(csv.reader(fh)), name))
-    return "\n".join(parts), True
+        files = sorted(work.glob("*.csv"), key=order)
+        if not files:
+            raise RenderError("gnumeric не отдал ни одного листа")
+
+        parts = []
+        for path in files:
+            _, _, name = path.name.partition("-")
+            with path.open(newline="", encoding="utf-8", errors="replace") as fh:
+                parts.append(_table(list(csv.reader(fh)), name.removesuffix(".csv")))
+        return "\n".join(parts)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
-def _para_text(node):
+def _para_text(node: ET.Element) -> str:
     return "".join(t.text or "" for t in node.iterfind(".//a:t", NS)).strip()
 
 
-def _shape_html(sp):
-    ph = sp.find("./p:nvSpPr/p:nvPr/p:ph", NS)
-    kind = ph.get("type", "body") if ph is not None else "body"
-    paras = [_para_text(p) for p in sp.iterfind(".//a:p", NS)]
-    paras = [p for p in paras if p]
+def _paragraphs(node: ET.Element) -> list[tuple[int, str]]:
+    """Абзацы фигуры вместе с уровнем вложенности списка."""
+    out = []
+    for para in node.iterfind(".//a:p", NS):
+        text = _para_text(para)
+        if not text:
+            continue
+        props = para.find("./a:pPr", NS)
+        level = int(props.get("lvl", "0")) if props is not None else 0
+        out.append((min(level, 3), text))
+    return out
+
+
+def _shape_html(shape: ET.Element) -> str:
+    placeholder = shape.find("./p:nvSpPr/p:nvPr/p:ph", NS)
+    kind = placeholder.get("type", "body") if placeholder is not None else "body"
+    paras = _paragraphs(shape)
     if not paras:
         return ""
     if kind in ("title", "ctrTitle"):
-        return f"<h2>{html.escape(paras[0])}</h2>\n" + "".join(
-            f"<p>{html.escape(p)}</p>\n" for p in paras[1:]
-        )
-    if len(paras) > 1:
-        items = "".join(f"<li>{html.escape(p)}</li>" for p in paras)
-        return f"<ul>{items}</ul>\n"
-    return f"<p>{html.escape(paras[0])}</p>\n"
+        head = f"<h2>{html.escape(paras[0][1])}</h2>\n"
+        rest = paras[1:]
+    else:
+        head, rest = "", paras
+    # Абзацы остаются абзацами: списком их делает разметка исходника, а не
+    # то, что их несколько. Уровень отражаем отступом.
+    body = "".join(
+        f'<p class="lvl{lvl}">{html.escape(text)}</p>\n' if lvl else
+        f"<p>{html.escape(text)}</p>\n"
+        for lvl, text in rest
+    )
+    return head + body
 
 
-def _pic_html(pic, rels, media):
+def _pic_html(pic: ET.Element, rels: dict[str, str], media: dict[str, str]) -> str:
     blip = pic.find(".//a:blip", NS)
     if blip is None:
         return ""
     rid = blip.get(f"{{{NS['r']}}}embed")
-    target = rels.get(rid)
+    target = rels.get(rid) if rid else None
     if not target or target not in media:
-        return ""
+        # Внешняя ссылка или нестандартный путь — молча терять картинку
+        # хуже, чем сказать о ней.
+        return note("изображение не вложено в файл и не показано")
     return f'<p><img src="{html.escape(media[target])}" alt=""></p>\n'
 
 
-def _walk(node, rels, media):
+def _tbl_html(frame: ET.Element) -> str:
+    """Таблица слайда остаётся таблицей: плоский список ячеек нечитаем."""
+    table = frame.find(".//a:tbl", NS)
+    if table is None:
+        return ""
+    rows = []
+    for tr in table.iterfind("./a:tr", NS):
+        cells = "".join(
+            "<td>" + "<br>".join(html.escape(t) for _, t in _paragraphs(tc)) + "</td>"
+            for tc in tr.iterfind("./a:tc", NS)
+        )
+        rows.append(f"<tr>{cells}</tr>")
+    return f"<table><tbody>{''.join(rows)}</tbody></table>\n" if rows else ""
+
+
+def _walk(node: ET.Element, rels: dict[str, str], media: dict[str, str]) -> str:
     out = []
     for child in node:
         tag = child.tag.split("}")[-1]
@@ -490,42 +762,48 @@ def _walk(node, rels, media):
             out.append(_shape_html(child))
         elif tag == "pic":
             out.append(_pic_html(child, rels, media))
-        elif tag in ("grpSp", "graphicFrame"):
-            inner = _walk(child, rels, media)
-            if not inner and tag == "graphicFrame":
-                txt = [_para_text(p) for p in child.iterfind(".//a:p", NS)]
-                inner = "".join(f"<p>{html.escape(t)}</p>\n" for t in txt if t)
+        elif tag == "grpSp":
+            out.append(_walk(child, rels, media))
+        elif tag == "graphicFrame":
+            inner = _tbl_html(child) or _walk(child, rels, media)
+            if not inner:
+                texts = [t for _, t in _paragraphs(child)]
+                inner = "".join(f"<p>{html.escape(t)}</p>\n" for t in texts)
             out.append(inner)
     return "".join(out)
 
 
-def _rels_for(zf, slide_name):
-    rp = f"ppt/slides/_rels/{Path(slide_name).name}.rels"
-    if rp not in zf.namelist():
+def _rels_for(zf: zipfile.ZipFile, slide: str) -> dict[str, str]:
+    path = f"ppt/slides/_rels/{Path(slide).name}.rels"
+    if path not in zf.namelist():
         return {}
-    root = ET.fromstring(zf.read(rp))
+    root = ET.fromstring(zf.read(path))
     rels = {}
     for rel in root:
         target = rel.get("Target", "")
-        rels[rel.get("Id")] = os.path.normpath(os.path.join("ppt/slides", target)).replace("\\", "/")
+        rid = rel.get("Id")
+        if rid:
+            rels[rid] = os.path.normpath(
+                os.path.join("ppt/slides", target)).replace("\\", "/")
     return rels
 
 
-def _slide_order(zf):
+def _slide_order(zf: zipfile.ZipFile) -> list[str]:
     """Порядок слайдов по sldIdLst; если его нет — по номеру в имени."""
     names = [n for n in zf.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]
     try:
         pres = ET.fromstring(zf.read("ppt/presentation.xml"))
         rels = ET.fromstring(zf.read("ppt/_rels/presentation.xml.rels"))
         by_id = {
-            r.get("Id"): os.path.normpath(os.path.join("ppt", r.get("Target", ""))).replace("\\", "/")
+            r.get("Id"): os.path.normpath(
+                os.path.join("ppt", r.get("Target", ""))).replace("\\", "/")
             for r in rels
         }
-        ordered = []
-        for sid in pres.iterfind("./p:sldIdLst/p:sldId", NS):
-            t = by_id.get(sid.get(f"{{{NS['r']}}}id"))
-            if t in names:
-                ordered.append(t)
+        ordered = [
+            by_id.get(sid.get(f"{{{NS['r']}}}id"))
+            for sid in pres.iterfind("./p:sldIdLst/p:sldId", NS)
+        ]
+        ordered = [n for n in ordered if n in names]
         if ordered:
             return ordered
     except (KeyError, ET.ParseError):
@@ -533,10 +811,14 @@ def _slide_order(zf):
     return sorted(names, key=lambda n: int(re.search(r"(\d+)", Path(n).stem).group(1)))
 
 
-def render_pptx(src, outdir):
+def render_pptx(src: Path, outdir: Path) -> str:
     media_dir = outdir / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(src) as zf:
+    try:
+        zf = zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        raise RenderError("это не .pptx — архив не читается") from None
+    with zf:
         media = {}
         for name in zf.namelist():
             if name.startswith("ppt/media/") and not name.endswith("/"):
@@ -544,157 +826,317 @@ def render_pptx(src, outdir):
                 (media_dir / base).write_bytes(zf.read(name))
                 media[name] = f"media/{base}"
         parts = []
-        for i, slide in enumerate(_slide_order(zf), 1):
-            root = ET.fromstring(zf.read(slide))
+        for number, slide in enumerate(_slide_order(zf), 1):
+            try:
+                root = ET.fromstring(zf.read(slide))
+            except ET.ParseError:
+                parts.append(
+                    f'<section class="slide"><span class="num">Слайд {number}</span>\n'
+                    + note("слайд повреждён и не разобрался") + "</section>"
+                )
+                continue
             tree = root.find(".//p:cSld/p:spTree", NS)
             body = _walk(tree, _rels_for(zf, slide), media) if tree is not None else ""
             if not body.strip():
-                body = '<p class="note">Слайд без текста и растровых картинок.</p>'
-            parts.append(f'<section class="slide"><span class="num">Слайд {i}</span>\n{body}</section>')
+                body = note("Слайд без текста и растровых картинок.")
+            parts.append(
+                f'<section class="slide"><span class="num">Слайд {number}</span>\n'
+                f"{body}</section>"
+            )
     if not parts:
         raise RenderError("в презентации не нашлось слайдов")
-    return "\n".join(parts), False
+    return "\n".join(parts)
 
 
-def render_ppt(src, outdir):
+def render_ppt(src: Path, outdir: Path) -> str:
     """Бинарный .ppt: текста от catppt может не быть, картинки — из блобов."""
     try:
         text = run([CATPPT, str(src)]).decode("utf-8", "replace").strip()
-    except (RenderError, FileNotFoundError):
+    except RenderError:
         text = ""
     names = extract_blobs(src.read_bytes(), outdir / "media")
-    parts = [
-        '<p class="note">Старый формат .ppt: разметка слайдов не читается '
-        "без полноценного офиса — ниже текст и картинки из файла.</p>"
-    ]
-    if text:
-        parts += [f"<p>{html.escape(p)}</p>" for p in text.split("\n\n") if p.strip()]
+    if not text and not names:
+        raise RenderError("в файле не нашлось ни текста, ни картинок")
+    parts = [note(
+        "Старый формат .ppt: разметка слайдов не читается без полноценного "
+        "офиса — ниже текст и картинки из файла."
+    )]
+    parts += [f"<p>{html.escape(p)}</p>" for p in text.split("\n\n") if p.strip()]
     parts.append(gallery(names, "Изображения"))
-    return "\n".join(parts), False
+    return "\n".join(parts)
 
 
-def pick_renderer(src):
-    ext = src.suffix.lower()
-    if ext in PANDOC_FORMATS:
-        return lambda s, o: render_pandoc(s, o, PANDOC_FORMATS[ext]), ext.lstrip(".")
-    if ext == ".doc":
-        return render_doc, "doc"
-    if ext in SHEET_EXTS:
-        return render_sheet, ext.lstrip(".")
-    if ext == ".pptx":
-        return render_pptx, "pptx"
-    if ext == ".ppt":
-        return render_ppt, "ppt"
-    raise RenderError(f"не знаю, чем открыть {ext or 'файл без расширения'}")
+# --------------------------------------------------------------------------
+# реестр форматов
+
+class Format(NamedTuple):
+    kind: str                                   # метка в шапке страницы
+    render: Callable[[Path, Path], str]         # (исходник, каталог) -> HTML
+    wide: bool = False                          # альбомная страница
+
+
+def _pandoc(fmt: str) -> Callable[[Path, Path], str]:
+    def render(src: Path, outdir: Path) -> str:
+        return render_pandoc(src, outdir, fmt)
+    return render
+
+
+FORMATS: dict[str, Format] = {
+    ".docx": Format("docx", _pandoc("docx")),
+    ".odt": Format("odt", _pandoc("odt")),
+    ".rtf": Format("rtf", _pandoc("rtf")),
+    ".epub": Format("epub", _pandoc("epub")),
+    ".fb2": Format("fb2", _pandoc("fb2")),
+    # Читатель pandoc'а, а не gfm: таблицы и $math$ он понимает из коробки.
+    ".md": Format("md", _pandoc("markdown")),
+    ".markdown": Format("md", _pandoc("markdown")),
+    ".doc": Format("doc", render_doc),
+    ".xlsx": Format("xlsx", render_sheet, wide=True),
+    ".xlsm": Format("xlsm", render_sheet, wide=True),
+    ".xls": Format("xls", render_sheet, wide=True),
+    ".ods": Format("ods", render_sheet, wide=True),
+    ".gnumeric": Format("gnumeric", render_sheet, wide=True),
+    ".csv": Format("csv", render_sheet, wide=True),
+    ".tsv": Format("tsv", render_sheet, wide=True),
+    ".pptx": Format("pptx", render_pptx),
+    ".ppt": Format("ppt", render_ppt),
+}
+
+
+def pick_format(src: Path) -> Format:
+    fmt = FORMATS.get(src.suffix.lower())
+    if fmt is None:
+        raise RenderError(f"не знаю, чем открыть {src.suffix or 'файл без расширения'}")
+    return fmt
 
 
 # --------------------------------------------------------------------------
 # печать
 
-def to_pdf(index, pdf):
+# Сбой запуска, который лечится отключением песочницы: ядро без
+# unprivileged userns. Всё остальное отключением песочницы не чинится.
+SANDBOX_TROUBLE = re.compile(
+    r"namespace sandbox|clone\(\) returned|No usable sandbox|SUID sandbox|"
+    r"CLONE_NEWUSER", re.I)
+
+
+def _chromium_cmd(index: Path, pdf: Path, profile: Path) -> list[str]:
+    return [
+        CHROMIUM,
+        "--headless",
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--disable-extensions",
+        # Документ не должен ходить в сеть: ни трекинг-пикселей, ни утечки
+        # содержимого на чужой хост.
+        "--host-resolver-rules=MAP * ~NOTFOUND",
+        "--disable-background-networking",
+        "--disable-remote-fonts",
+        "--virtual-time-budget=20000",
+        "--no-pdf-header-footer",
+        f"--print-to-pdf={pdf}",
+        index.as_uri(),
+    ]
+
+
+def to_pdf(index: Path, pdf: Path) -> None:
     """Напечатать готовую страницу в PDF headless-хромиумом.
 
     Он уже стоит в системе и умеет и MathML, и картинки, так что отдельный
-    html2pdf-движок не нужен. Профиль — свой, чтобы не драться за блокировку
-    с обычным окном браузера.
+    html2pdf-движок не нужен. Профиль временный: общий каталог заставлял
+    параллельные запуски драться за ProcessSingleton и падать.
     """
-    profile = cache_root() / ".chromium"
-    profile.mkdir(parents=True, exist_ok=True)
-    base = [
-        CHROMIUM,
-        "--headless",
-        "--disable-gpu",
-        f"--user-data-dir={profile}",
-        "--virtual-time-budget=20000",  # дать дорисоваться картинкам и формулам
-        "--no-pdf-header-footer",
-        f"--print-to-pdf={pdf}",
-        f"file://{index}",
-    ]
-    attempts = [base, base[:1] + ["--no-sandbox"] + base[1:]]
-    last = ""
-    for cmd in attempts:
+    profile = Path(tempfile.mkdtemp(prefix="gdoc-chromium-"))
+    try:
+        cmd = _chromium_cmd(index, pdf, profile)
         try:
-            run(cmd, timeout=180)
-        except RenderError as exc:
-            last = str(exc)
-        except subprocess.TimeoutExpired:
-            last = "chromium не уложился в 180 с"
-        if pdf.exists() and pdf.stat().st_size > 0:
-            return
-    raise RenderError(f"не удалось напечатать PDF ({last or 'пустой файл'})")
+            run(cmd, timeout=PRINT_TIMEOUT)
+        except RenderError as first:
+            if not SANDBOX_TROUBLE.search(str(first)):
+                raise
+            print(f"gdoc: {first}; печатаю без песочницы chromium",
+                  file=sys.stderr)
+            run(cmd + ["--no-sandbox"], timeout=PRINT_TIMEOUT)
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+    if not pdf.exists() or pdf.stat().st_size == 0:
+        raise RenderError("chromium не записал PDF")
 
 
 # --------------------------------------------------------------------------
 # кэш
 
-def cache_root():
+def cache_root() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "gdoc"
 
 
-def slugify(stem):
-    return re.sub(r"[^\w.-]+", "_", stem).strip(".")[:48] or "doc"
+def slugify(stem: str) -> str:
+    """Имя, безопасное для каталога кэша и для заголовка окна zathura."""
+    return re.sub(r"[^\w.-]+", "_", stem).strip("._-")[:48] or "doc"
 
 
-def cache_dir(src):
+def renderer_fingerprint() -> str:
+    """От чего зависит результат, кроме самого документа.
+
+    Store-пути конвертеров меняются при их обновлении, вёрстка — при правке
+    CSS и скрипта. Так кэш инвалидируется сам, без счётчика версии, который
+    надо не забыть поднять руками.
+    """
+    material = "\0".join(
+        [PANDOC, WVHTML, SSCONVERT, CATPPT, ANTIWORD, CHROMIUM, PAGE_CSS, PAGE_JS]
+    )
+    return hashlib.sha1(material.encode()).hexdigest()[:12]
+
+
+def cache_dir(src: Path) -> Path:
     st = src.stat()
-    key = f"{RENDERER}|{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
+    key = f"{renderer_fingerprint()}|{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
     digest = hashlib.sha1(key.encode()).hexdigest()[:16]
     return cache_root() / f"{slugify(src.stem)}-{digest}"
 
 
-def prune_cache(keep=40):
+def prune_cache(keep: int = CACHE_KEEP) -> None:
     root = cache_root()
     if not root.is_dir():
         return
-    # .chromium — профиль для печати, он не документ и чистке не подлежит.
-    dirs = sorted((d for d in root.iterdir() if d.is_dir() and d.name[0] != "."),
-                  key=lambda d: d.stat().st_mtime, reverse=True)
-    for stale in dirs[keep:]:
+    entries = []
+    for entry in root.iterdir():
+        # Точка — служебное: недособранные каталоги параллельных запусков.
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        try:
+            entries.append((entry.stat().st_mtime, entry))
+        except OSError:
+            continue  # каталог убрал другой процесс
+    entries.sort(reverse=True)
+    for _, stale in entries[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
 
 
-def build(src, force=False, as_pdf=True):
-    render, kind = pick_renderer(src)
+def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
+    """Собрать документ и вернуть путь к готовому файлу в кэше.
+
+    Оба артефакта публикуются атомарно: каталог собирается рядом под
+    точечным именем и переезжает на место одним rename, PDF пишется во
+    временный файл и тоже переименовывается. Поэтому параллельные запуски
+    не мешают друг другу, а прерванный на середине не оставляет в кэше
+    полуфабрикат, который потом переиспользуется молча и навсегда.
+    """
     out = cache_dir(src)
     index = out / "index.html"
     # Имя PDF видно в заголовке zathura, поэтому берём его от исходника.
     pdf = out / f"{slugify(src.stem)}.pdf"
 
-    if force or not index.exists():
-        if out.exists():
-            shutil.rmtree(out)
-        out.mkdir(parents=True)
-        try:
-            body, wide = render(src, out)
-            index.write_text(page(src.name, kind, body, wide), "utf-8")
-        except Exception:
-            shutil.rmtree(out, ignore_errors=True)
-            raise
-        prune_cache()
+    # Формат выясняем до всякой работы: на незнакомом расширении незачем
+    # трогать кэш и плодить каталоги.
+    fmt = pick_format(src)
 
+    if force:
+        shutil.rmtree(out, ignore_errors=True)
+    elif out.exists() and not index.exists():
+        # Запись от прежних версий, собиравших кэш не атомарно.
+        shutil.rmtree(out, ignore_errors=True)
+
+    if not index.exists():
+        staging = out.with_name(f".tmp-{os.getpid()}-{out.name}")
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        try:
+            body = fmt.render(src, staging)
+            (staging / "index.html").write_text(
+                page(src.name, fmt.kind, body, fmt.wide), "utf-8")
+            try:
+                staging.replace(out)
+            except OSError:
+                pass  # нас опередил параллельный запуск — берём его результат
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    if not index.exists():
+        raise RenderError("не удалось положить результат в кэш")
+
+    # Отметка доступа: без неё вытеснение шло бы по дате сборки и выбрасывало
+    # документ, который открывают каждый день, наравне с забытым.
+    try:
+        os.utime(out)
+    except OSError:
+        pass
+    prune_cache()
     if not as_pdf:
         return index
-    if force or not pdf.exists():
-        to_pdf(index, pdf)
+
+    if not pdf.exists() or pdf.stat().st_size == 0:
+        draft = out / f".tmp-{os.getpid()}.pdf"
+        try:
+            to_pdf(index, draft)
+            draft.replace(pdf)
+        finally:
+            draft.unlink(missing_ok=True)
     return pdf
 
 
-def main(argv=None):
+# --------------------------------------------------------------------------
+# командная строка
+
+def looks_like_dir(raw: str) -> bool:
+    """Просили каталог? Слэш проверяем по исходной строке.
+
+    Path его молча срезает, так что `Path(raw).name` про намерение
+    пользователя уже ничего не знает.
+    """
+    return raw.endswith(("/", os.sep)) or Path(raw).expanduser().is_dir()
+
+
+def export(pdf: Path, src: Path, raw_dest: str, overwrite: bool) -> Path:
+    """Положить готовый PDF туда, куда попросили в --out."""
+    dest = Path(raw_dest).expanduser()
+    if looks_like_dir(raw_dest):
+        final = dest / (src.stem + ".pdf")
+    else:
+        final = dest if dest.suffix.lower() == ".pdf" else dest.with_name(dest.name + ".pdf")
+    if final.exists() and not overwrite:
+        raise RenderError(f"{final} уже есть — перезаписать можно с --force")
+    final.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(pdf, final)
+    return final
+
+
+def launcher(args: argparse.Namespace) -> tuple[str, Callable[[Path], list[str]]]:
+    """Чем открывать результат и с какими аргументами."""
+    if args.html:
+        browser = shutil.which(args.browser) or args.browser
+        name = Path(browser).name
+
+        def open_html(target: Path) -> list[str]:
+            if "chrom" in name:
+                return [browser, f"--app={target.as_uri()}"]
+            return [browser, target.as_uri()]
+
+        return browser, open_html
+
+    viewer = shutil.which(args.viewer) or args.viewer
+    return viewer, lambda target: [viewer, str(target)]
+
+
+def parse_args(argv: list[str] | None) -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     ap = argparse.ArgumentParser(
         prog="gdoc",
         description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt/.md в zathura.",
     )
-    ap.add_argument("files", nargs="+", metavar="ФАЙЛ")
-    ap.add_argument("-f", "--force", action="store_true", help="перерисовать, игнорируя кэш")
+    # nargs="*", иначе --clean нельзя вызвать без файла, как обещает --help.
+    ap.add_argument("files", nargs="*", metavar="ФАЙЛ")
+    ap.add_argument("-f", "--force", action="store_true",
+                    help="перерисовать мимо кэша, а с --out ещё и перезаписать")
     ap.add_argument("-p", "--path", action="store_true",
                     help="напечатать путь в кэше, не открывать")
     ap.add_argument("-o", "--out", metavar="КУДА",
-                    help="сохранить PDF рядом насовсем: каталог или имя файла "
+                    help="сохранить PDF насовсем: каталог или имя файла "
                          "(каталог '.' — текущий); окно при этом не открывается")
     ap.add_argument("--html", action="store_true",
                     help="не печатать PDF, а открыть HTML в браузере")
-    ap.add_argument("-v", "--viewer", default=os.environ.get("GDOC_VIEWER", "zathura"),
+    ap.add_argument("--viewer", default=os.environ.get("GDOC_VIEWER", "zathura"),
                     help="чем смотреть PDF (по умолчанию zathura)")
     ap.add_argument("-b", "--browser", default=os.environ.get("GDOC_BROWSER", "chromium"),
                     help="чем открывать --html")
@@ -702,71 +1144,77 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.clean:
+        if args.files:
+            ap.error("--clean чистит кэш целиком, файлы ему не нужны")
+        return ap, args
+    if not args.files:
+        ap.error("нужен хотя бы один ФАЙЛ")
+    if args.out and args.html:
+        ap.error("--out сохраняет PDF, с --html он не имеет смысла")
+    if args.out and args.path:
+        ap.error("--out и --path просят разного: выберите что-то одно")
+    if args.out and len(args.files) > 1 and not looks_like_dir(args.out):
+        ap.error(f"файлов несколько — в --out нужен каталог, а не {args.out}")
+    return ap, args
+
+
+def main(argv: list[str] | None = None) -> int:
+    _, args = parse_args(argv)
+
+    if args.clean:
         shutil.rmtree(cache_root(), ignore_errors=True)
         print("кэш очищен")
         return 0
 
-    if args.out and args.html:
-        ap.error("--out сохраняет PDF, с --html он не имеет смысла")
-
-    dest = Path(args.out).expanduser() if args.out else None
-    # Имя файла в -o допустимо только для одного документа.
-    if dest is not None and len(args.files) > 1 and not dest.is_dir():
-        ap.error(f"файлов несколько — в --out нужен существующий каталог, а не {dest}")
 
     rc = 0
-    targets = []
+    ready: list[tuple[Path, Path]] = []
     for name in args.files:
-        src = Path(name).expanduser()
+        # Абсолютный путь обязателен: конвертеры работают из каталога кэша,
+        # и относительное имя разрешалось бы уже от него.
+        src = Path(os.path.abspath(os.path.expanduser(name)))
         if not src.is_file():
             print(f"gdoc: не файл: {src}", file=sys.stderr)
             rc = 1
             continue
         try:
-            targets.append(build(src, args.force, as_pdf=not args.html))
+            ready.append((src, build(src, args.force, as_pdf=not args.html)))
         except RenderError as exc:
             print(f"gdoc: {src.name}: {exc}", file=sys.stderr)
             rc = 1
+        except OSError as exc:
+            print(f"gdoc: {src.name}: {exc.strerror or exc}", file=sys.stderr)
+            rc = 1
         except Exception as exc:  # noqa: BLE001 — показать причину, а не трейс
-            print(f"gdoc: {src.name}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(f"gdoc: {src.name}: не удалось прочитать файл ({exc})",
+                  file=sys.stderr)
             rc = 1
 
-    if not targets:
-        return rc
+    if not ready:
+        return rc or 1
 
-    if dest is not None:
-        for t in targets:
-            final = dest / t.name if dest.is_dir() else dest
-            if final.suffix.lower() != ".pdf":
-                final = final.with_name(final.name + ".pdf")
+    if args.out:
+        for src, pdf in ready:
             try:
-                final.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(t, final)
-            except OSError as exc:
-                print(f"gdoc: не записать {final}: {exc.strerror}", file=sys.stderr)
+                print(export(pdf, src, args.out, args.force))
+            except (RenderError, OSError) as exc:
+                reason = exc.strerror if isinstance(exc, OSError) else exc
+                print(f"gdoc: не записать из {src.name}: {reason}", file=sys.stderr)
                 rc = 1
-                continue
-            print(final)
         return rc
 
     if args.path:
-        for t in targets:
-            print(t)
+        for _, target in ready:
+            print(target)
         return rc
 
-    if args.html:
-        browser = shutil.which(args.browser) or args.browser
-        launch = lambda t: (  # noqa: E731
-            [browser, f"--app=file://{t}"] if "chrom" in Path(browser).name
-            else [browser, f"file://{t}"]
-        )
-    else:
-        viewer = shutil.which(args.viewer) or args.viewer
-        launch = lambda t: [viewer, str(t)]  # noqa: E731
-
-    for t in targets:
+    program, argv_for = launcher(args)
+    if shutil.which(program) is None and not Path(program).is_file():
+        print(f"gdoc: не найдена программа {program}", file=sys.stderr)
+        return 1
+    for _, target in ready:
         subprocess.Popen(
-            launch(t),
+            argv_for(target),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
