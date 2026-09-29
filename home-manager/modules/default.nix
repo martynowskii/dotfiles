@@ -11,6 +11,7 @@
     ./portals.nix
     ./sh-tools.nix
     ./torrent.nix
+    ./yazi.nix
     ./zsh.nix
   ];
 }
