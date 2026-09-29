@@ -1,20 +1,14 @@
 { ... }:
 
 {
+  # Шаблон yazi в noctalia должен оставаться выключенным: он правит theme.toml
+  # через sed -i и заменил бы симлинк из стора обычным файлом
   programs.yazi = {
     enable = true;
 
-    # Шаблон yazi в noctalia выключен: он правит theme.toml через sed -i и заменил
-    # бы симлинк из стора обычным файлом
-    flavors."noctalia" = ../../yazi/flavors/noctalia.yazi;
-
+    # Цвета — встроенные в yazi. Ниже только то, что гасит скругления:
+    # по умолчанию во всех этих ключах U+E0B6/U+E0B4
     theme = {
-      flavor = {
-        dark = "noctalia";
-        light = "noctalia";
-      };
-
-      # Везде ниже по умолчанию U+E0B6/U+E0B4 — они и рисуют скругления
       indicator.padding = {
         open = "";
         close = "";
