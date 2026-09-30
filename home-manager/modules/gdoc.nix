@@ -24,13 +24,10 @@ let
     export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${pkgs.chromium}/bin/chromium}
     export GDOC_BROWSER=''${GDOC_BROWSER:-${pkgs.chromium}/bin/chromium}
     export GDOC_VIEWER=''${GDOC_VIEWER:-${pkgs.zathura}/bin/zathura}
-    # Из .desktop stderr не видно, поэтому об ошибке говорим уведомлением.
-    export GDOC_NOTIFY=${pkgs.libnotify}/bin/notify-send
     exec ${pkgs.python3}/bin/python3 ${../gdoc/gdoc.py} "$@"
   '';
 
-  documentMimes = import ../gdoc/mimes.nix;
-
+  documentMimes = import ./gdoc-mimes.nix;
 in
 {
   home.packages = [ gdoc ];

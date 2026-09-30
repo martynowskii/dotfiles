@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import errno
+import functools
 import hashlib
 import html
 import os
@@ -59,9 +60,12 @@ PRINT_TIMEOUT = 180
 # Глубже этого разметку уже никто не писал осмысленно, а очистка на
 # вложенности в десятки тысяч тегов съедает секунды CPU.
 MAX_DEPTH = 200
-# Старше этого недособранный каталог точно брошен упавшим запуском:
-# живой давно бы его дочистил.
-STAGING_MAX_AGE = 3600
+# Дольше этого недособранный каталог живым процессом держаться не может:
+# потолок жизни запуска — RUN_TIMEOUT плюс PRINT_TIMEOUT.
+STAGING_MAX_AGE = RUN_TIMEOUT + PRINT_TIMEOUT + 60
+# Запись моложе этого кто-то прямо сейчас читает или печатает: build
+# обновляет время доступа перед самой печатью.
+CACHE_MIN_AGE = 120
 # Потолок на распаковку вложений презентации, чтобы zip-бомба не легла
 # в кэш целиком.
 MAX_MEDIA_BYTES = 256 * 1024 * 1024
@@ -71,6 +75,9 @@ TAG_NAME = re.compile(r"[a-zA-Z][a-zA-Z0-9:._-]*")
 # Растровые data-картинки безопасны, в отличие от svg+xml, который
 # является документом и умеет нести скрипты.
 DATA_IMAGE = re.compile(r"data:image/(png|jpe?g|gif|webp|bmp|avif|tiff);")
+# Цветовые функции CSS: аргументы у них только числовые, так что вырезать
+# их из проверки значения безопасно.
+COLOR_FN = re.compile(r"(?:rgba?|hsla?)\([0-9,.%/\s+-]*\)", re.I)
 
 
 def tool(env_var: str, name: str) -> str:
@@ -109,14 +116,19 @@ class _Sanitizer(HTMLParser):
     список, и он ниже.
     """
 
-    # Тег и всё его содержимое.
+    # Тег вместе с содержимым. Только те, у кого закрывающий тег бывает:
+    # для остальных подавление некому снять, и остаток документа пропал бы
+    # целиком — молча и без следа.
     DROP_TREE = frozenset({
-        "script", "style", "noscript", "template", "iframe", "frame",
-        "frameset", "object", "embed", "applet", "form", "title", "portal",
-        # SMIL умеет подставлять ссылку в href уже после очистки: адрес
-        # лежит в values/to/from, а это не атрибуты ссылок. Конвертеры
-        # анимацию не выдают, так что проще выбросить её целиком.
-        "animate", "animatetransform", "animatemotion", "set",
+        "script", "style", "noscript", "template", "iframe", "frameset",
+        "object", "applet", "form", "title", "portal",
+    })
+    # Одиночные опасные теги: содержимого у них нет, подавлять нечего.
+    # SMIL сюда же — он подставляет адрес в href уже после очистки, а лежит
+    # тот в values/to/from, куда фильтр ссылок не смотрит.
+    DROP_SELF = frozenset({
+        "embed", "frame", "animate", "animatetransform", "animatemotion",
+        "set",
     })
     # Сам тег выбрасываем, детей оставляем.
     DROP_TAG = frozenset({
@@ -192,22 +204,33 @@ class _Sanitizer(HTMLParser):
         "border-left", "border-right", "border-color", "border-style",
         "border-width", "border-collapse", "width", "height", "max-width",
         "min-width", "display", "float", "clear", "list-style", "list-style-type",
+        # Печать — единственный режим вывода, разрывы страниц тут по делу.
+        "page-break-before", "page-break-after", "page-break-inside",
+        "break-before", "break-after", "break-inside",
     })
 
     def _safe_style(self, value: str) -> str | None:
         kept = []
+        lost = 0
         for chunk in value.split(";"):
             prop, sep, val = chunk.partition(":")
             if not sep:
                 continue
             prop = prop.strip().lower()
             val = val.strip()
-            if prop not in self.STYLE_PROPS:
+            if not prop or not val:
                 continue
-            # Ни функций, ни эскейпов: цвета и размеры обходятся без них.
-            if any(c in val for c in "(\\@;{}"):
+            # Цветовые функции — основная форма записи цвета у офисных
+            # конвертеров, поэтому их вырезаем из проверки, а не запрещаем.
+            # Всё, что осталось со скобкой или эскейпом, отбрасываем: там
+            # прячется url() в том числе в виде u\72l(...).
+            if prop not in self.STYLE_PROPS or any(
+                    c in COLOR_FN.sub("", val) for c in "(\\@{}"):
+                lost += 1
                 continue
             kept.append(f"{prop}: {val}")
+        if lost:
+            self.dropped["оформление"] += lost
         return "; ".join(kept) or None
 
     def _attrs(self, attrs: Iterable[tuple[str, str | None]]) -> str:
@@ -234,9 +257,22 @@ class _Sanitizer(HTMLParser):
 
     def _skip(self, tag: str) -> bool:
         """Тег, который не должен попасть в вывод как разметка."""
-        return (tag in self.DROP_TAG
-                or not TAG_NAME.fullmatch(tag)
-                or len(self.open_tags) >= MAX_DEPTH)
+        if tag in self.DROP_TAG:
+            return True
+        if not TAG_NAME.fullmatch(tag):
+            return True
+        if len(self.open_tags) >= MAX_DEPTH:
+            # Текст внутри останется, а структура — нет, так что ячейки и
+            # абзацы за границей сольются. Сказать об этом обязательно.
+            self.dropped["предел вложенности"] += 1
+            return True
+        return False
+
+    def _count_lost(self, tag: str, attrs) -> None:
+        """Учесть выброшенный элемент, если он тянул что-то извне."""
+        if any(name.lower() in self.URL_ATTRS and value
+               for name, value in attrs):
+            self.dropped["внешняя вставка"] += 1
 
     def handle_starttag(self, tag: str, attrs) -> None:
         if self.suppress:
@@ -244,7 +280,11 @@ class _Sanitizer(HTMLParser):
                 self.suppress += 1
             return
         if tag in self.DROP_TREE:
+            self._count_lost(tag, attrs)
             self.suppress = 1
+            return
+        if tag in self.DROP_SELF:
+            self._count_lost(tag, attrs)
             return
         if self._skip(tag):
             return
@@ -254,7 +294,12 @@ class _Sanitizer(HTMLParser):
             self.open_count[tag] += 1
 
     def handle_startendtag(self, tag: str, attrs) -> None:
-        if self.suppress or tag in self.DROP_TREE or self._skip(tag):
+        if self.suppress or tag in self.DROP_TREE:
+            return
+        if tag in self.DROP_SELF:
+            self._count_lost(tag, attrs)
+            return
+        if self._skip(tag):
             return
         if tag in self.VOID:
             self.out.append(f"<{tag}{self._attrs(attrs)}>")
@@ -269,7 +314,7 @@ class _Sanitizer(HTMLParser):
             if tag in self.DROP_TREE:
                 self.suppress -= 1
             return
-        if tag in self.DROP_TAG or tag in self.VOID:
+        if tag in self.DROP_TAG or tag in self.DROP_SELF or tag in self.VOID:
             return
         if not self.open_count[tag]:
             return  # закрытие без открытия — выбрасываем
@@ -300,8 +345,8 @@ class _Sanitizer(HTMLParser):
         return "".join(self.out)
 
 
-def sanitize(markup: str) -> tuple[str, int]:
-    """Очистить разметку конвертера. Возвращает ещё и число потерь.
+def sanitize(markup: str) -> tuple[str, Counter[str]]:
+    """Очистить разметку конвертера. Возвращает ещё и список потерь.
 
     О потерянном надо сказать: документ со ссылочными иллюстрациями иначе
     открывается с пустыми местами и без единого намёка, что что-то вырезано.
@@ -309,7 +354,19 @@ def sanitize(markup: str) -> tuple[str, int]:
     parser = _Sanitizer()
     parser.feed(markup)
     parser.close()
-    return parser.result(), sum(parser.dropped.values())
+    return parser.result(), parser.dropped
+
+
+# Как объяснять потерю каждого вида — по-русски, а не именем счётчика.
+LOSS_WORDING = {
+    "ссылка наружу": "ссылок на внешние ресурсы: {n} (документ тянул их из "
+                     "сети или из файловой системы, на их месте пусто)",
+    "внешняя вставка": "внешних вставок: {n} (видео, фреймы и подобное)",
+    "оформление": "правил оформления: {n} (они умели подгружать что-то "
+                  "извне)",
+    "предел вложенности": "уровней вложенности: {n} — дальше разметка "
+                          "слишком глубокая, текст там мог слипнуться",
+}
 
 
 def sanitized_body(markup: str) -> str:
@@ -317,10 +374,11 @@ def sanitized_body(markup: str) -> str:
     body, dropped = sanitize(markup)
     if not dropped:
         return body
-    return note(
-        f"Вырезано ссылок на внешние ресурсы: {dropped}. Документ тянул их "
-        "из сети или из файловой системы; на их месте пусто."
-    ) + body
+    parts = [
+        LOSS_WORDING.get(kind, kind + ": {n}").format(n=count)
+        for kind, count in dropped.most_common()
+    ]
+    return note("Вырезано " + "; ".join(parts) + ".") + body
 
 
 # --------------------------------------------------------------------------
@@ -1103,16 +1161,20 @@ def slugify(stem: str) -> str:
     return re.sub(r"[^\w.-]+", "_", stem).strip("._-")[:48] or "doc"
 
 
+@functools.cache
 def _source_digest() -> str:
     """Отпечаток собственного кода.
 
     Правка логики рендера меняет результат так же, как правка CSS, — без
     этого запись, собранная прежней версией, переиспользовалась бы молча.
+    Если прочитать себя не удалось (zipapp, frozen-сборка), инвалидация по
+    коду отключается — под nix-обёрткой путь всегда настоящий, так что это
+    только про нештатный запуск.
     """
     try:
         return hashlib.sha1(Path(__file__).read_bytes()).hexdigest()
-    except OSError:
-        return "неизвестно"
+    except (OSError, NameError):
+        return "исходник недоступен"
 
 
 def renderer_fingerprint() -> str:
@@ -1136,11 +1198,13 @@ def cache_dir(src: Path) -> Path:
     return cache_root() / f"{slugify(src.stem)}-{digest}"
 
 
-def prune_cache(keep: int = CACHE_KEEP, protect: Path | None = None) -> None:
+def prune_cache(keep: int = CACHE_KEEP) -> None:
     """Вытеснить лишнее и подобрать за упавшими запусками.
 
-    protect — каталог, которым прямо сейчас пользуется вызывающий: без него
-    параллельный запуск может снести запись между проверкой и печатью.
+    Свежие записи не трогаем вовсе: `build` обновляет время доступа сразу
+    перед вызовом, так что «свежая» — это ровно та, которой прямо сейчас
+    пользуется кто-то (в том числе другой процесс, до чьих переменных
+    отсюда не дотянуться).
     """
     root = cache_root()
     if not root.is_dir():
@@ -1160,7 +1224,7 @@ def prune_cache(keep: int = CACHE_KEEP, protect: Path | None = None) -> None:
             if now - mtime > STAGING_MAX_AGE:
                 shutil.rmtree(entry, ignore_errors=True)
             continue
-        if protect is not None and entry == protect:
+        if now - mtime < CACHE_MIN_AGE:
             continue
         entries.append((mtime, entry))
     entries.sort(reverse=True)
@@ -1224,7 +1288,7 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
         os.utime(out)
     except OSError:
         pass
-    prune_cache(protect=out)
+    prune_cache()
     if not as_pdf:
         return index
 
@@ -1245,26 +1309,14 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
 # --------------------------------------------------------------------------
 # командная строка
 
-NOTIFY = tool("GDOC_NOTIFY", "notify-send")
-
-
 def fail(message: str) -> None:
-    """Сообщить об ошибке так, чтобы её увидели.
+    """Сообщить об ошибке.
 
-    Из .desktop stderr не идёт никуда, а двойной клик по документу, который
-    не отрисовался, выглядит как зависшая система. Когда мы не в терминале,
-    дублируем уведомлением.
+    Только stderr: из .desktop его никто не увидит, и документ, который не
+    отрисовался, оттуда выглядит как ничего не произошло. Это осознанный
+    размен — уведомления не стоят отдельной зависимости ради одного случая.
     """
     print(f"gdoc: {message}", file=sys.stderr)
-    if sys.stderr.isatty():
-        return
-    try:
-        subprocess.run(
-            [NOTIFY, "-a", "gdoc", "-u", "critical", "gdoc", message],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass  # уведомлений нет — не беда, в stderr уже написано
 
 
 def looks_like_dir(raw: str) -> bool:
@@ -1273,7 +1325,7 @@ def looks_like_dir(raw: str) -> bool:
     Path его молча срезает, так что `Path(raw).name` про намерение
     пользователя уже ничего не знает.
     """
-    return raw.endswith(("/", os.sep)) or Path(raw).expanduser().is_dir()
+    return raw.endswith(os.sep) or Path(raw).expanduser().is_dir()
 
 
 def export(pdf: Path, src: Path, raw_dest: str, overwrite: bool) -> Path:
@@ -1354,7 +1406,6 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(cache_root(), ignore_errors=True)
         print("кэш очищен")
         return 0
-
 
     rc = 0
     ready: list[tuple[Path, Path]] = []

@@ -20,7 +20,7 @@ let
 
   # Тот же список, что получает .desktop в gdoc.nix: держать его в двух
   # местах руками — верный способ их рассинхронизировать.
-  gdocMimes = import ../gdoc/mimes.nix;
+  gdocMimes = import ./gdoc-mimes.nix;
 in
 {
   home.packages = [ docReader ];
@@ -63,7 +63,9 @@ in
   xdg.mimeApps = {
     enable = true;
 
-    defaultApplications = lib.genAttrs gdocMimes (_: "gdoc.desktop") // {
+    # genAttrs справа: общий список главнее, иначе правка в
+    # gdoc-mimes.nix молча не подействовала бы.
+    defaultApplications = {
       "application/pdf" = "org.pwmt.zathura.desktop";
       "application/postscript" = "org.pwmt.zathura.desktop";
       "application/epub+zip" = "org.pwmt.zathura.desktop";
@@ -105,7 +107,7 @@ in
       "x-scheme-handler/tonsite" = "org.telegram.desktop.desktop";
       "x-scheme-handler/mailto" = "chromium-browser.desktop";
       "x-scheme-handler/claude-cli" = "claude-code-url-handler.desktop";
-    };
+    } // lib.genAttrs gdocMimes (_: "gdoc.desktop");
 
     associations.added = {
       "x-scheme-handler/tg" = "org.telegram.desktop.desktop";

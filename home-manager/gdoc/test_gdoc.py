@@ -113,11 +113,21 @@ class TestSanitizeUrls(unittest.TestCase):
 
     def test_dropped_resources_are_counted(self):
         _, dropped = gdoc.sanitize('<img src="http://a/1"><img src="/etc/x">')
-        self.assertEqual(dropped, 2)
+        self.assertEqual(sum(dropped.values()), 2)
 
     def test_note_added_when_something_dropped(self):
         body = gdoc.sanitized_body('<img src="http://evil/x">')
-        self.assertIn("Вырезано ссылок", body)
+        self.assertIn("Вырезано", body)
+        self.assertIn("ссылок на внешние ресурсы: 1", body)
+
+    def test_note_mentions_every_kind_of_loss(self):
+        body = gdoc.sanitized_body(
+            '<img src="http://evil/x">'
+            '<iframe src="http://evil/y"></iframe>'
+            '<p style="background:url(http://evil/z)">t</p>')
+        self.assertIn("ссылок на внешние ресурсы", body)
+        self.assertIn("внешних вставок", body)
+        self.assertIn("правил оформления", body)
 
     def test_no_note_when_nothing_dropped(self):
         self.assertNotIn("Вырезано", gdoc.sanitized_body("<p>чисто</p>"))
@@ -141,6 +151,22 @@ class TestSanitizeStyle(unittest.TestCase):
         out = clean('<p style="color: Black; background-color: White">a</p>')
         self.assertIn("color: Black", out)
         self.assertIn("background-color: White", out)
+
+    def test_color_functions_kept(self):
+        # rgb() — основная форма записи цвета у офисных конвертеров.
+        for value in ("color: rgb(200,0,0)", "color: rgba(0,0,0,.5)",
+                      "background-color: hsl(10,5%,5%)",
+                      "border: 1px solid rgb(0,0,0)"):
+            with self.subTest(value=value):
+                self.assertIn("style=", clean(f'<p style="{value}">t</p>'))
+
+    def test_page_breaks_kept(self):
+        self.assertIn("page-break-inside",
+                      clean('<p style="page-break-inside: avoid">t</p>'))
+
+    def test_dropped_style_is_counted(self):
+        _, dropped = gdoc.sanitize('<p style="background:url(http://evil/x)">t</p>')
+        self.assertEqual(sum(dropped.values()), 1)
 
     def test_unknown_property_dropped(self):
         self.assertNotIn("behavior", clean('<p style="behavior: url(x.htc)">a</p>'))
@@ -176,6 +202,11 @@ class TestSanitizeStructure(unittest.TestCase):
         clean("<div>" * 20000 + "x" + "</div>" * 20000)
         self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_depth_overflow_is_reported(self):
+        deep = "<div>" * (gdoc.MAX_DEPTH + 5) + "дно"
+        body = gdoc.sanitized_body(deep)
+        self.assertIn("уровней вложенности", body)
+
     def test_weird_tag_name_dropped(self):
         out = clean('<a"onload=x">t</a"onload=x">')
         self.assertNotIn("onload", out)
@@ -190,6 +221,32 @@ class TestSanitizeStructure(unittest.TestCase):
     def test_text_is_escaped(self):
         self.assertIn("&lt;", clean("a &lt; b"))
         self.assertNotIn("<b>", clean("5 &lt; 6 &amp; 7"))
+
+    def test_content_survives_tags_without_a_closing_form(self):
+        # У <embed> и <frame> закрывающего тега не бывает, поэтому удаление
+        # «вместе с содержимым» съедало весь остаток документа.
+        for markup in ('<p>до</p><embed src="x"><p>ПОСЛЕ</p>',
+                       '<p>до</p><frame src="x"><p>ПОСЛЕ</p>',
+                       '<svg><animate attributeName="href" to="http://evil/">'
+                       '</svg><p>ПОСЛЕ</p>',
+                       '<svg><set attributeName="href" to="http://evil/"></svg>'
+                       '<p>ПОСЛЕ</p>'):
+            with self.subTest(markup=markup):
+                out = clean(markup)
+                self.assertIn("ПОСЛЕ", out)
+                self.assertNotIn("evil", out)
+
+    def test_single_tags_are_not_suppressors(self):
+        # Инвариант: тег без закрывающей формы нельзя класть в DROP_TREE,
+        # снять подавление будет некому.
+        self.assertEqual(
+            gdoc._Sanitizer.VOID & gdoc._Sanitizer.DROP_TREE, frozenset())
+        self.assertEqual(
+            gdoc._Sanitizer.DROP_SELF & gdoc._Sanitizer.DROP_TREE, frozenset())
+
+    def test_dropped_embed_is_counted(self):
+        _, dropped = gdoc.sanitize('<embed src="http://evil/x">')
+        self.assertEqual(sum(dropped.values()), 1)
 
     def test_head_dropped_body_kept(self):
         out = clean("<html><head><title>T</title><style>p{}</style></head>"
@@ -561,11 +618,18 @@ class TestCache(unittest.TestCase):
         gdoc.prune_cache()
         self.assertFalse(staging.exists())
 
-    def test_prune_spares_protected_entry(self):
+    def test_prune_spares_recently_used_entries(self):
+        # Свежая запись — это та, которой кто-то прямо сейчас пользуется,
+        # в том числе другой процесс.
         self._fill(gdoc.CACHE_KEEP + 5)
-        victim = gdoc.cache_root() / "doc000-0000000000000000"
-        gdoc.prune_cache(protect=victim)
-        self.assertTrue(victim.exists())
+        fresh = gdoc.cache_root() / "doc000-0000000000000000"
+        os.utime(fresh)
+        gdoc.prune_cache()
+        self.assertTrue(fresh.exists())
+
+    def test_staging_age_cannot_outlive_a_running_process(self):
+        self.assertGreater(gdoc.STAGING_MAX_AGE,
+                           gdoc.RUN_TIMEOUT + gdoc.PRINT_TIMEOUT)
 
 
 class TestBuild(unittest.TestCase):
