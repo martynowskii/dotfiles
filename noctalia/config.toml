@@ -45,6 +45,7 @@ countdown_seconds = 10
 action            = "command"
 label             = "Hibernate"
 command           = "systemctl hibernate"
+enabled           = false  # нет swap-файла, гибернации некуда сохранять память
 shortcut          = "3"
 countdown_seconds = 10
 
