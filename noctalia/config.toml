@@ -29,7 +29,10 @@ enabled = false
 # Кнопки меню сессии как в v4 (отсчёт 10 с); гибернации и входа в UEFI
 # среди встроенных действий v5 нет — они заданы командами.
 [[shell.session.actions]]
-action            = "lock"
+action            = "command"
+label             = "Lock"
+glyph             = "lock"
+command           = "swaylock"
 shortcut          = "1"
 countdown_seconds = 10
 
@@ -119,9 +122,9 @@ border             = false
 
 # ── Блокировка и простой ──────────────────────────────────────────────────────
 
+# В темноте свой лок-скрин не принимает пароль; блокирует swaylock (lock.nix).
 [lockscreen]
-enabled             = true
-lock_before_suspend = true
+enabled             = false
 transition          = []     # v4: lockScreenAnimations = false
 blur_intensity      = 0.0
 tint_intensity      = 0.0
@@ -136,7 +139,8 @@ enabled = true
 
 [idle.behavior.lock]
 timeout = 660
-action  = "lock"
+action  = "command"
+command = "swaylock"
 enabled = true
 
 [idle.behavior.suspend]

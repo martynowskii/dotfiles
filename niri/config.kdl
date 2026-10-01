@@ -9,6 +9,9 @@ include "binds.kdl"
 // Find the full list of options on the wiki:
 // https://niri-wm.github.io/niri/Configuration:-Input
 input {
+    // Кнопку питания обрабатывает бинд XF86PowerOff.
+    disable-power-key-handling
+
     keyboard {
         xkb {
             // You can set rules, model, layout, variant and options.
@@ -364,7 +367,7 @@ gestures {
 }
 
 switch-events {
-    lid-close { spawn "noctalia" "msg" "session" "lock-and-suspend"; }
+    lid-close { spawn "systemctl" "suspend"; }
 }
 
 debug {

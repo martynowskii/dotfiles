@@ -19,7 +19,6 @@
     file
     jq
     libimobiledevice
-    swaylock
     wget
     wl-clipboard
     wtype
