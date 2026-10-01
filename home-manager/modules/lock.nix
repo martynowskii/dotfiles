@@ -11,7 +11,6 @@ in
       screenshots = true;
       effect-blur = "30x8";
       effect-vignette = "0.5:0.2";
-      fade-in = 0.3;
       # swayidle ждёт выхода команды: сон начнётся, когда экран уже заблокирован.
       daemonize = true;
     };
