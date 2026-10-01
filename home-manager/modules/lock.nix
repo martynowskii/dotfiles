@@ -9,7 +9,7 @@ in
     package = pkgs.swaylock-effects;
     settings = {
       screenshots = true;
-      effect-blur = "20x6";
+      effect-blur = "30x8";
       # swayidle ждёт выхода команды: сон начнётся, когда экран уже заблокирован.
       daemonize = true;
     };
