@@ -32,4 +32,8 @@ in
   # Логин-кейринг gnome-keyring расшифровывается паролем, который кладёт в PAM
   # pam_unix. Пустить на экран входа лицо — значит оставить кейринг закрытым.
   security.pam.services.greetd.howdy.enable = false;
+
+  # Введённый пароль проверяется сразу, лицо — только на пустой Enter.
+  security.pam.services.swaylock.rules.auth.howdy.order =
+    config.security.pam.services.swaylock.rules.auth.unix.order + 10;
 }

@@ -6,6 +6,7 @@
   services.logind.settings.Login = {
     HandleLidSwitch = "ignore";
     HandleLidSwitchExternalPower = "ignore";
+    HandlePowerKey = "ignore";
   };
 
   # Set your time zone.

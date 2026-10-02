@@ -9,6 +9,9 @@ include "binds.kdl"
 // Find the full list of options on the wiki:
 // https://niri-wm.github.io/niri/Configuration:-Input
 input {
+    // Кнопку питания обрабатывает бинд XF86PowerOff.
+    disable-power-key-handling
+
     keyboard {
         xkb {
             // You can set rules, model, layout, variant and options.
@@ -270,7 +273,7 @@ layout {
 // See the binds section below for more spawn examples.
 
 // This line starts waybar, a commonly used bar for Wayland compositors.
-spawn-at-startup "noctalia-shell"
+spawn-at-startup "noctalia"
 
 // XWayland для X11-приложений (Siemens NX 10 и прочий Motif-софт).
 // niri не встраивает XWayland, его поднимает отдельный процесс-сателлит.
@@ -337,14 +340,6 @@ window-rule {
     open-floating true
 }
 
-// Диалог выбора файлов (termfilechooser -> yazi).
-window-rule {
-    match app-id=r#"^termfilechooser$"#
-    open-floating true
-    default-column-width { fixed 1100; }
-    default-window-height { fixed 700; }
-}
-
 // Example: block out two password managers from screen capture.
 // (This example rule is commented out with a "/-" in front.)
 /-window-rule {
@@ -364,8 +359,15 @@ window-rule {
     clip-to-geometry true
 }
 
+// Горячие углы niri (верхний левый открывает overview) — у Noctalia свои, отдельные.
+gestures {
+    hot-corners {
+        off
+    }
+}
+
 switch-events {
-    lid-close { spawn "noctalia-shell" "ipc" "call" "sessionMenu" "lockAndSuspend"; }
+    lid-close { spawn "systemctl" "suspend"; }
 }
 
 debug {
@@ -373,5 +375,6 @@ debug {
     honor-xdg-activation-with-invalid-serial
 }
 
-include "./noctalia.kdl"
 
+
+include "noctalia.kdl"
