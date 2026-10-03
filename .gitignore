@@ -1,0 +1,5 @@
+# Результат home-manager build
+result
+
+# Байткод python
+__pycache__/

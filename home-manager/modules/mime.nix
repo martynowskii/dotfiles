@@ -18,9 +18,9 @@ let
     esac | ${pkgs.less}/bin/less
   '';
 
-  # Тот же список, что получает .desktop в gdoc.nix: держать его в двух
+  # Тот же список, что получает .desktop в docs.nix: держать его в двух
   # местах руками — верный способ их рассинхронизировать.
-  gdocMimes = import ./gdoc-mimes.nix;
+  gdocMimes = import ../../apps/gdoc/mimes.nix;
 in
 {
   home.packages = [ docReader ];
@@ -65,17 +65,17 @@ in
     enable = true;
 
     # genAttrs справа: общий список главнее, иначе правка в
-    # gdoc-mimes.nix молча не подействовала бы.
+    # apps/gdoc/mimes.nix молча не подействовала бы.
     defaultApplications = {
       "application/pdf" = "org.pwmt.zathura.desktop";
       "application/postscript" = "org.pwmt.zathura.desktop";
       "application/epub+zip" = "org.pwmt.zathura.desktop";
       "image/vnd.djvu" = "org.pwmt.zathura.desktop";
 
-      # gdoc рендерит документ в PDF и открывает в zathura (см. gdoc.nix).
+      # gdoc рендерит документ в PDF и открывает в zathura (см. docs.nix).
       # doc-reader дефолтом больше нигде не стоит и остаётся только как
       # команда в терминале — быстро заглянуть в .doc без рендера.
-      # Что намеренно не отдано gdoc и почему — в самом gdoc/mimes.nix.
+      # Что намеренно не отдано gdoc и почему — в apps/gdoc/mimes.nix.
 
       "image/png" = "imv.desktop";
       "image/jpeg" = "imv.desktop";

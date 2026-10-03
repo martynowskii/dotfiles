@@ -6,7 +6,6 @@
     ./claude.nix
     ./docs.nix
     ./foot.nix
-    ./gdoc.nix
     ./lock.nix
     ./mime.nix
     ./niri.nix
