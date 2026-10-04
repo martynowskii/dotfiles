@@ -3,13 +3,12 @@
 { pkgs, ... }:
 
 {
-  # Приложение живёт в apps/gdoc — там исходники, тесты, объявление
-  # окружения и своя .desktop-запись. Здесь только подключение, как у
-  # pa9 и siemens-nx. Какой программой открывать .docx на этой машине
-  # решает mime.nix: это уже не свойство gdoc.
+  # Сами приложения собираются в apps/, здесь только подключение — как у
+  # pa9 и siemens-nx. Чем открывать .docx по двойному щелчку, решает
+  # mime.nix: это свойство машины, а не программы.
   home.packages = with pkgs; [
     (callPackage ../../apps/gdoc { })
-    (callPackage ../../pkgs/zaread { })
+    (callPackage ../../apps/zaread { })
     antiword   # .doc  -> текст
     pandoc     # .docx -> plain/markdown/latex
     zathura    # pdf, ps, djvu, epub, cbz + картинки
