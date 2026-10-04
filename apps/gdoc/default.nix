@@ -23,6 +23,8 @@
 # и nix об этом не сказал бы ни слова.
 { lib
 , writeShellScriptBin
+, writeTextFile
+, symlinkJoin
 , python3
 , pandoc
 , wv
@@ -44,20 +46,50 @@ let
     src = ./.;
     filter = path: type: type == "regular" && lib.hasSuffix ".py" path;
   };
+  gdoc = writeShellScriptBin "gdoc" ''
+    export GDOC_PANDOC=${pandoc}/bin/pandoc
+    export GDOC_WVHTML=${wv}/bin/wvHtml
+    export GDOC_SSCONVERT=${gnumeric}/bin/ssconvert
+    export GDOC_CATPPT=${catdoc}/bin/catppt
+    export GDOC_ANTIWORD=${antiword}/bin/antiword
+    export GDOC_TYPST=${typst}/bin/typst
+    # Шрифты тоже из store: со шрифтами машины один и тот же markdown
+    # печатался бы по-разному, а моноширинный без кириллицы молча подменялся
+    # засечным. Засечный у typst свой, встроенный, — тут только моно и санс.
+    export GDOC_TYPST_FONTS=${dejavu_fonts}/share/fonts
+    export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${chromium}/bin/chromium}
+    export GDOC_BROWSER=''${GDOC_BROWSER:-${chromium}/bin/chromium}
+    export GDOC_VIEWER=''${GDOC_VIEWER:-${zathura}/bin/zathura}
+    exec ${python3}/bin/python3 ${sources}/gdoc.py "$@"
+  '';
+
+  # Без .desktop двойной щелчок по документу до gdoc не доходит: ассоциация
+  # типов умеет ссылаться только на такую запись, а не на программу. Лежит
+  # она в самом пакете, а не в конфигурации home-manager, потому что
+  # описывает gdoc, а не машину: из профиля её подхватит любой XDG_DATA_DIRS,
+  # хоть через home.packages, хоть через environment.systemPackages.
+  #
+  # Чего тут нет — какой программой открывать .docx на этой машине: это
+  # как раз решение машины, и живёт оно в mime.nix.
+  desktop = writeTextFile {
+    name = "gdoc-desktop";
+    destination = "/share/applications/gdoc.desktop";
+    text = ''
+      [Desktop Entry]
+      Type=Application
+      Name=gdoc
+      Comment=Открыть документ в zathura
+      # %F, а не %f: gdoc принимает список файлов и открывает каждый.
+      Exec=${gdoc}/bin/gdoc %F
+      Terminal=false
+      # Запускать gdoc без файла нечего, в меню приложений он лишний.
+      NoDisplay=true
+      MimeType=${lib.concatMapStrings (m: m + ";") (import ./mimes.nix)}
+    '';
+  };
 in
-writeShellScriptBin "gdoc" ''
-  export GDOC_PANDOC=${pandoc}/bin/pandoc
-  export GDOC_WVHTML=${wv}/bin/wvHtml
-  export GDOC_SSCONVERT=${gnumeric}/bin/ssconvert
-  export GDOC_CATPPT=${catdoc}/bin/catppt
-  export GDOC_ANTIWORD=${antiword}/bin/antiword
-  export GDOC_TYPST=${typst}/bin/typst
-  # Шрифты тоже из store: со шрифтами машины один и тот же markdown печатался
-  # бы по-разному, а моноширинный без кириллицы молча подменялся засечным.
-  # Засечный у typst свой, встроенный, — тут только моноширинный и санс.
-  export GDOC_TYPST_FONTS=${dejavu_fonts}/share/fonts
-  export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${chromium}/bin/chromium}
-  export GDOC_BROWSER=''${GDOC_BROWSER:-${chromium}/bin/chromium}
-  export GDOC_VIEWER=''${GDOC_VIEWER:-${zathura}/bin/zathura}
-  exec ${python3}/bin/python3 ${sources}/gdoc.py "$@"
-''
+symlinkJoin {
+  name = "gdoc";
+  paths = [ gdoc desktop ];
+  meta.mainProgram = "gdoc";
+}

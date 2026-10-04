@@ -59,9 +59,14 @@ PDF любой доступный файл. Поэтому markdown читает
 home.packages = [ (pkgs.callPackage ../../apps/gdoc { }) ];
 ```
 
-Список mime-типов для `.desktop` лежит отдельно в `mimes.nix`, чтобы
-`.desktop`-запись и `xdg.mimeApps` не разъезжались. Как это подключено
-здесь — `home-manager/modules/docs.nix` и `mime.nix`.
+Больше ничего не нужно: `.desktop`-запись пакет несёт в себе, в
+`share/applications/`, — без неё двойной щелчок по документу до gdoc не
+доходит, потому что ассоциация типов умеет ссылаться только на неё.
+
+Чего пакет про себя не решает — какой программой открывать `.docx` на
+конкретной машине: это `xdg.mimeApps`, и живёт оно в конфигурации
+(`home-manager/modules/mime.nix`). Чтобы два места не разъезжались, список
+типов один и тот же — `mimes.nix` читают и `.desktop`, и `mime.nix`.
 
 Переменные окружения переопределяют то, что прибито к store:
 `GDOC_VIEWER`, `GDOC_BROWSER`, `GDOC_CHROMIUM`.
