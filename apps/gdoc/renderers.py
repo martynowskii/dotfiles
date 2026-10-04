@@ -13,8 +13,8 @@ from typing import Callable, NamedTuple
 from xml.etree import ElementTree as ET
 
 from blobs import extract_blobs, gallery
-from common import (ANTIWORD, CATPPT, PANDOC, SSCONVERT, WVHTML, RenderError,
-                    run)
+from common import (ANTIWORD, CATPPT, PANDOC, PRINT_TIMEOUT, SSCONVERT, TYPST,
+                    TYPST_FONTS, WVHTML, RenderError, run)
 from page import note
 from sanitize import sanitized_body
 
@@ -371,10 +371,63 @@ def render_ppt(src: Path, outdir: Path) -> str:
     return "\n".join(parts)
 
 
+# Это zathura читает сама, и лучше нас: epub она листает как книгу, а не как
+# простыню на двести страниц, а PDF незачем печатать второй раз. Список
+# сверен с плагинами, которые собраны в zathura-with-plugins (pdf-mupdf, djvu,
+# ps, cb); со сторонним --viewer он может и не совпасть.
+#
+# .fb2 mupdf тоже открывает, но почти без оформления, поэтому его мы
+# по-прежнему рисуем сами.
+VIEWER_READS = frozenset({
+    ".pdf", ".ps", ".eps", ".epub", ".mobi", ".oxps",
+    ".djvu", ".djv", ".cbz", ".cbr", ".cb7", ".cbt",
+})
+
+
+# Сырой typst из markdown пропускать нельзя: pandoc отдаёт блок ```{=typst}
+# компилятору как код, а #read("/etc/passwd") вклеит в PDF любой файл,
+# доступный пользователю. Этот читатель гасит такие блоки на входе,
+# превращая их в обычный текст.
+TYPST_READER = "markdown-raw_attribute"
+
+
 class Format(NamedTuple):
     kind: str                                   # метка в шапке страницы
     render: Callable[[Path, Path], str]         # (исходник, каталог) -> HTML
     wide: bool = False                          # альбомная страница
+    # Свой путь в PDF, мимо страницы и браузера: (исходник, каталог, PDF).
+    # HTML при этом всё равно собирается — он нужен для --html и служит
+    # отметкой готовности записи в кэше.
+    pdf: Callable[[Path, Path, Path], None] | None = None
+
+
+def _typst_cmd(doc: Path, root: Path, pdf: Path) -> list[str]:
+    cmd = [TYPST, "compile", "--root", str(root)]
+    if TYPST_FONTS:
+        # Иначе результат зависит от шрифтов машины: моноширинный без
+        # кириллицы молча подменяется засечным, и код в тексте не отличить.
+        cmd += ["--font-path", TYPST_FONTS, "--ignore-system-fonts"]
+    return cmd + [str(doc), str(pdf)]
+
+
+def render_typst(src: Path, workdir: Path, pdf: Path) -> None:
+    """Markdown -> PDF через typst, минуя HTML и браузер.
+
+    Формулы typst набирает настоящим математическим шрифтом, тогда как в
+    MathML'е chromium радикал наезжает на дробь. Картинки уже распакованы в
+    workdir html-проходом, а --root запирает чтение этим каталогом — вторая
+    преграда на случай, если сырой typst всё-таки просочится.
+    """
+    doc = workdir / f".tmp-{os.getpid()}.typ"
+    try:
+        run([PANDOC, "-f", TYPST_READER, "-t", "typst",
+             f"--resource-path={src.parent}", "--extract-media=media",
+             "-o", doc.name, str(src)], cwd=workdir)
+        run(_typst_cmd(doc, workdir, pdf), timeout=PRINT_TIMEOUT)
+    finally:
+        doc.unlink(missing_ok=True)
+    if not pdf.exists() or pdf.stat().st_size == 0:
+        raise RenderError("typst не записал PDF")
 
 
 def _pandoc(fmt: str) -> Callable[[Path, Path], str]:
@@ -387,11 +440,10 @@ FORMATS: dict[str, Format] = {
     ".docx": Format("docx", _pandoc("docx")),
     ".odt": Format("odt", _pandoc("odt")),
     ".rtf": Format("rtf", _pandoc("rtf")),
-    ".epub": Format("epub", _pandoc("epub")),
     ".fb2": Format("fb2", _pandoc("fb2")),
     # Читатель pandoc'а, а не gfm: таблицы и $math$ он понимает из коробки.
-    ".md": Format("md", _pandoc("markdown")),
-    ".markdown": Format("md", _pandoc("markdown")),
+    ".md": Format("md", _pandoc("markdown"), pdf=render_typst),
+    ".markdown": Format("md", _pandoc("markdown"), pdf=render_typst),
     ".doc": Format("doc", render_doc),
     ".xlsx": Format("xlsx", render_sheet, wide=True),
     ".xlsm": Format("xlsm", render_sheet, wide=True),

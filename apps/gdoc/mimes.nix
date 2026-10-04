@@ -4,7 +4,9 @@
 # Чего тут намеренно нет, хотя gdoc это читает:
 #   text/csv, text/tab-separated-values, text/markdown — обычный текст,
 #     который чаще правят, чем читают; остаётся за nvim;
-#   application/epub+zip — zathura показывает epub лучше и листает быстрее.
+#   application/epub+zip, application/pdf, image/vnd.djvu и прочее готовое —
+#     gdoc такое не рисует, а просто передаёт просмотрщику, так что ставить
+#     его посредником между файлом и zathura незачем (см. VIEWER_READS).
 [
   # тексты
   "application/msword"

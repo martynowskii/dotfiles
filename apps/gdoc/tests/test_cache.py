@@ -137,6 +137,19 @@ class TestBuild(unittest.TestCase):
         os.environ.pop("XDG_CACHE_HOME", None)
         self.tmp.cleanup()
 
+    def test_own_pdf_path_bypasses_the_browser(self):
+        # У markdown печатает typst; подставной рендерер здесь занимает его
+        # место, и chromium (его заглушка пишет %PDF-1.4) вмешаться не должен.
+        def own(src: Path, workdir: Path, pdf: Path) -> None:
+            pdf.write_bytes(b"%PDF-1.7\n")
+
+        with mock.patch.dict(renderers.FORMATS,
+                             {".fake": self.fmt._replace(pdf=own)}):
+            out = cache.build(self.doc)
+        self.assertEqual(out.read_bytes(), b"%PDF-1.7\n")
+        # HTML всё равно собран: без него не работал бы --html.
+        self.assertTrue((out.parent / "index.html").exists())
+
     def test_builds_html_and_pdf(self):
         pdf = cache.build(self.doc)
         self.assertTrue(pdf.exists())

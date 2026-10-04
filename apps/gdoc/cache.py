@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 from common import (ANTIWORD, CATPPT, CHROMIUM, PANDOC, PRINT_TIMEOUT,
-                    RUN_TIMEOUT, SSCONVERT, WVHTML, RenderError)
+                    RUN_TIMEOUT, SSCONVERT, TYPST, TYPST_FONTS, WVHTML,
+                    RenderError)
 from page import PAGE_CSS, PAGE_JS, page
 from printing import to_pdf
 from renderers import pick_format
@@ -74,7 +75,7 @@ def renderer_fingerprint() -> str:
     """
     material = "\0".join(
         [PANDOC, WVHTML, SSCONVERT, CATPPT, ANTIWORD, CHROMIUM,
-         PAGE_CSS, PAGE_JS, _source_digest()]
+         TYPST, TYPST_FONTS, PAGE_CSS, PAGE_JS, _source_digest()]
     )
     return hashlib.sha1(material.encode()).hexdigest()[:12]
 
@@ -187,7 +188,11 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
     if not ready:
         draft = out / f".tmp-{os.getpid()}.pdf"
         try:
-            to_pdf(index, draft)
+            # У markdown свой набор: typst печатает его сам, минуя страницу.
+            if fmt.pdf is not None:
+                fmt.pdf(src, out, draft)
+            else:
+                to_pdf(index, draft)
             draft.replace(pdf)
         finally:
             draft.unlink(missing_ok=True)

@@ -27,6 +27,11 @@ SSCONVERT = tool("GDOC_SSCONVERT", "ssconvert")
 CATPPT = tool("GDOC_CATPPT", "catppt")
 ANTIWORD = tool("GDOC_ANTIWORD", "antiword")
 CHROMIUM = tool("GDOC_CHROMIUM", "chromium")
+TYPST = tool("GDOC_TYPST", "typst")
+
+# Каталог со шрифтами для typst. Пусто — брать системные; nix-обёртка его
+# всегда задаёт, чтобы одна и та же разметка печаталась одинаково везде.
+TYPST_FONTS = os.environ.get("GDOC_TYPST_FONTS", "")
 
 
 class RenderError(Exception):

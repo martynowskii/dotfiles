@@ -171,3 +171,53 @@ class TestPickFormat(unittest.TestCase):
             with self.subTest(name=name):
                 with self.assertRaises(common.RenderError):
                     renderers.pick_format(Path(name))
+
+
+class TestViewerReads(unittest.TestCase):
+    """Готовые форматы уходят просмотрщику, а не в рендер."""
+
+    def test_no_format_is_both_rendered_and_passed_through(self):
+        # Иначе результат зависел бы от порядка проверок — ровно так epub
+        # и рендерился мимо zathura, которая листает его лучше.
+        self.assertEqual(renderers.VIEWER_READS & set(renderers.FORMATS), set())
+
+    def test_epub_is_left_to_the_viewer(self):
+        self.assertIn(".epub", renderers.VIEWER_READS)
+        with self.assertRaises(common.RenderError):
+            renderers.pick_format(Path("книга.epub"))
+
+    def test_fb2_is_still_rendered(self):
+        # mupdf его открывает, но почти без оформления.
+        self.assertIn(".fb2", renderers.FORMATS)
+        self.assertNotIn(".fb2", renderers.VIEWER_READS)
+
+
+class TestTypstCommand(unittest.TestCase):
+    """Markdown печатает typst, и печатает взаперти."""
+
+    def test_markdown_goes_through_typst(self):
+        for ext in (".md", ".markdown"):
+            with self.subTest(ext=ext):
+                self.assertIs(renderers.FORMATS[ext].pdf, renderers.render_typst)
+
+    def test_raw_typst_from_document_is_disabled(self):
+        # Без этого блок ```{=typst} с #read("/etc/passwd") доехал бы до
+        # компилятора и вклеил содержимое файла в PDF.
+        self.assertIn("-raw_attribute", renderers.TYPST_READER)
+
+    def test_root_confines_reads(self):
+        cmd = renderers._typst_cmd(Path("/кэш/doc.typ"), Path("/кэш"),
+                                   Path("/кэш/out.pdf"))
+        self.assertEqual(cmd[cmd.index("--root") + 1], "/кэш")
+
+    def test_pinned_fonts_shut_out_system_ones(self):
+        with mock.patch.object(renderers, "TYPST_FONTS", "/шрифты"):
+            cmd = renderers._typst_cmd(Path("d.typ"), Path("."), Path("o.pdf"))
+        self.assertIn("--ignore-system-fonts", cmd)
+        self.assertEqual(cmd[cmd.index("--font-path") + 1], "/шрифты")
+
+    def test_without_pinned_fonts_system_ones_stay(self):
+        with mock.patch.object(renderers, "TYPST_FONTS", ""):
+            cmd = renderers._typst_cmd(Path("d.typ"), Path("."), Path("o.pdf"))
+        self.assertNotIn("--ignore-system-fonts", cmd)
+        self.assertNotIn("--font-path", cmd)

@@ -12,6 +12,7 @@ from typing import Callable
 
 from cache import build, cache_root
 from common import RenderError
+from renderers import VIEWER_READS
 
 
 def fail(message: str) -> None:
@@ -67,7 +68,8 @@ def launcher(args: argparse.Namespace) -> tuple[str, Callable[[Path], list[str]]
 def parse_args(argv: list[str] | None) -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     ap = argparse.ArgumentParser(
         prog="gdoc",
-        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt/.md в zathura.",
+        description="Открыть .doc/.docx/.ppt/.pptx/.xls/.xlsx/.odt/.md в zathura. "
+                    "PDF, epub, djvu и прочее готовое открывается как есть.",
     )
     # nargs="*", иначе --clean нельзя вызвать без файла, как обещает --help.
     ap.add_argument("files", nargs="*", metavar="ФАЙЛ")
@@ -121,6 +123,15 @@ def main(argv: list[str] | None = None) -> int:
         if not src.is_file():
             fail(f"не файл: {src}")
             rc = 1
+            continue
+        if src.suffix.lower() in VIEWER_READS:
+            # Рендерить нечего и незачем: отдаём исходник как есть.
+            if args.out or args.html:
+                fail(f"{src.name}: это уже готовый для просмотра формат, "
+                     f"рендерить нечего")
+                rc = 1
+                continue
+            ready.append((src, src))
             continue
         try:
             ready.append((src, build(src, args.force, as_pdf=not args.html)))

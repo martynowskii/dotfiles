@@ -14,6 +14,8 @@
 #   gnumeric  — ssconvert для .xls/.xlsx/.ods/.csv
 #   catdoc    — остатки текста из бинарного .ppt
 #   antiword  — запасной путь для .doc, если wvHtml споткнулся
+#   typst     — markdown печатает он: формулы набраны по-настоящему, а не
+#               MathML'ем браузера, где радикал наезжает на дробь
 #
 # Промежуточный HTML печатает в PDF headless-chromium: он умеет MathML,
 # так что отдельный html2pdf-движок не нужен. Пути до всего прибиты к
@@ -28,6 +30,8 @@
 , catdoc
 , antiword
 , chromium
+, typst
+, dejavu_fonts
 , zathura
 }:
 
@@ -47,6 +51,11 @@ writeShellScriptBin "gdoc" ''
   export GDOC_SSCONVERT=${gnumeric}/bin/ssconvert
   export GDOC_CATPPT=${catdoc}/bin/catppt
   export GDOC_ANTIWORD=${antiword}/bin/antiword
+  export GDOC_TYPST=${typst}/bin/typst
+  # Шрифты тоже из store: со шрифтами машины один и тот же markdown печатался
+  # бы по-разному, а моноширинный без кириллицы молча подменялся засечным.
+  # Засечный у typst свой, встроенный, — тут только моноширинный и санс.
+  export GDOC_TYPST_FONTS=${dejavu_fonts}/share/fonts
   export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${chromium}/bin/chromium}
   export GDOC_BROWSER=''${GDOC_BROWSER:-${chromium}/bin/chromium}
   export GDOC_VIEWER=''${GDOC_VIEWER:-${zathura}/bin/zathura}
