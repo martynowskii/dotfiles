@@ -9,6 +9,7 @@
   # решает mime.nix: это уже не свойство gdoc.
   home.packages = with pkgs; [
     (callPackage ../../apps/gdoc { })
+    (callPackage ../../pkgs/zaread { })
     antiword   # .doc  -> текст
     pandoc     # .docx -> plain/markdown/latex
     zathura    # pdf, ps, djvu, epub, cbz + картинки
