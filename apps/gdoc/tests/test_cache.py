@@ -138,8 +138,8 @@ class TestBuild(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_own_pdf_path_bypasses_the_browser(self):
-        # У markdown печатает typst; подставной рендерер здесь занимает его
-        # место, и chromium (его заглушка пишет %PDF-1.4) вмешаться не должен.
+        # Так печатает markdown typst. Заглушка chromium пишет %PDF-1.4,
+        # так что её вмешательство будет видно.
         def own(src: Path, workdir: Path, pdf: Path) -> None:
             pdf.write_bytes(b"%PDF-1.7\n")
 

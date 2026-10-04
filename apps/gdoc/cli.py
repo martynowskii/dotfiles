@@ -125,7 +125,6 @@ def main(argv: list[str] | None = None) -> int:
             rc = 1
             continue
         if src.suffix.lower() in VIEWER_READS:
-            # Рендерить нечего и незачем: отдаём исходник как есть.
             if args.out or args.html:
                 fail(f"{src.name}: это уже готовый для просмотра формат, "
                      f"рендерить нечего")

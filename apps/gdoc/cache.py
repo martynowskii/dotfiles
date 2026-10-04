@@ -188,7 +188,6 @@ def build(src: Path, force: bool = False, as_pdf: bool = True) -> Path:
     if not ready:
         draft = out / f".tmp-{os.getpid()}.pdf"
         try:
-            # У markdown свой набор: typst печатает его сам, минуя страницу.
             if fmt.pdf is not None:
                 fmt.pdf(src, out, draft)
             else:

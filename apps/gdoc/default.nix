@@ -53,9 +53,8 @@ let
     export GDOC_CATPPT=${catdoc}/bin/catppt
     export GDOC_ANTIWORD=${antiword}/bin/antiword
     export GDOC_TYPST=${typst}/bin/typst
-    # Шрифты тоже из store: со шрифтами машины один и тот же markdown
-    # печатался бы по-разному, а моноширинный без кириллицы молча подменялся
-    # засечным. Засечный у typst свой, встроенный, — тут только моно и санс.
+    # Шрифты тоже из store, иначе один и тот же markdown печатался бы
+    # по-разному. Засечный у typst свой, встроенный, — тут моно и санс.
     export GDOC_TYPST_FONTS=${dejavu_fonts}/share/fonts
     export GDOC_CHROMIUM=''${GDOC_CHROMIUM:-${chromium}/bin/chromium}
     export GDOC_BROWSER=''${GDOC_BROWSER:-${chromium}/bin/chromium}
@@ -65,12 +64,8 @@ let
 
   # Без .desktop двойной щелчок по документу до gdoc не доходит: ассоциация
   # типов умеет ссылаться только на такую запись, а не на программу. Лежит
-  # она в самом пакете, а не в конфигурации home-manager, потому что
-  # описывает gdoc, а не машину: из профиля её подхватит любой XDG_DATA_DIRS,
-  # хоть через home.packages, хоть через environment.systemPackages.
-  #
-  # Чего тут нет — какой программой открывать .docx на этой машине: это
-  # как раз решение машины, и живёт оно в mime.nix.
+  # она в пакете, а не в конфигурации, потому что описывает gdoc, а не
+  # машину. Чем открывать .docx именно здесь — решает mime.nix.
   desktop = writeTextFile {
     name = "gdoc-desktop";
     destination = "/share/applications/gdoc.desktop";
@@ -79,10 +74,8 @@ let
       Type=Application
       Name=gdoc
       Comment=Открыть документ в zathura
-      # %F, а не %f: gdoc принимает список файлов и открывает каждый.
       Exec=${gdoc}/bin/gdoc %F
       Terminal=false
-      # Запускать gdoc без файла нечего, в меню приложений он лишний.
       NoDisplay=true
       MimeType=${lib.concatMapStrings (m: m + ";") (import ./mimes.nix)}
     '';

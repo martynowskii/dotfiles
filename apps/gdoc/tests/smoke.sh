@@ -21,8 +21,7 @@ bad=0
 pass() { printf 'ок      %s\n' "$1"; ok=$((ok + 1)); }
 flunk() { printf 'ПРОВАЛ  %s\n' "$1"; bad=$((bad + 1)); }
 
-# Документ собирается и даёт настоящий PDF. Путь к нему — в $made, чтобы
-# проверяющий дальше код не гадал, как он называется.
+# Собирает PDF и оставляет путь к нему в $made.
 made=
 renders() {
   local src=$1
@@ -47,7 +46,7 @@ printf 'а,б,в\n1,2,3\n' > таблица.csv
 printf '{\\rtf1\\ansi Privet.\\par}' > письмо.rtf
 for f in таблица.csv письмо.rtf; do renders "$f" || true; done
 
-# Markdown печатает typst; его PDF узнаётся по встроенным шрифтам.
+# PDF, напечатанный typst'ом, узнаётся по его встроенным шрифтам.
 if renders заметка.md; then
   if grep -aq 'NewCM\|Libertinus' "$made"; then
     pass "markdown напечатан typst'ом"
@@ -56,9 +55,8 @@ if renders заметка.md; then
   fi
 fi
 
-# Картинка из markdown доезжает до PDF: pandoc распаковывает её в кэш, а
-# typst читает её уже оттуда, запертый --root. python3 тут не новая
-# зависимость — сам gdoc на нём и написан.
+# Картинку typst читает из кэша, куда её распаковал pandoc: иначе --root
+# её бы не пустил. python3 тут не новая зависимость — gdoc на нём и написан.
 python3 - <<'PY'
 import struct, zlib, pathlib
 def chunk(kind, data):
@@ -79,8 +77,7 @@ if renders скартинкой.md; then
   fi
 fi
 
-# Сырой typst из документа не должен исполняться: иначе #read вклеил бы
-# в PDF любой доступный файл.
+# Иначе #read из документа вклеил бы в PDF любой доступный файл.
 printf 'Текст.\n\n```{=typst}\n#read("/etc/passwd")\n```\n' > атака.md
 if renders атака.md; then
   if grep -aq 'root:x:' "$made"; then
@@ -90,7 +87,6 @@ if renders атака.md; then
   fi
 fi
 
-# Готовые форматы отдаются просмотрщику как есть.
 printf '%%PDF-1.4\n%%готово\n' > готовый.pdf
 got=$(timeout 60 "$GDOC" -p -- готовый.pdf 2>/dev/null)
 if [ "$got" = "$WORK/готовый.pdf" ]; then
@@ -104,7 +100,6 @@ else
   pass "--out на готовом формате отказывает"
 fi
 
-# Кэш отдаёт тот же путь, а не пересобирает каждый раз.
 first=$(timeout 180 "$GDOC" -p -- заметка.md 2>/dev/null)
 second=$(timeout 180 "$GDOC" -p -- заметка.md 2>/dev/null)
 if [ -n "$first" ] && [ "$first" = "$second" ]; then

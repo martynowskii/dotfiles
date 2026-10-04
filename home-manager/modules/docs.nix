@@ -8,8 +8,6 @@
   # pa9 и siemens-nx. Какой программой открывать .docx на этой машине
   # решает mime.nix: это уже не свойство gdoc.
   home.packages = with pkgs; [
-    # Скобки обязательны: в списке `callPackage путь { }` без них разобралось
-    # бы как три отдельных элемента, а не как вызов.
     (callPackage ../../apps/gdoc { })
     antiword   # .doc  -> текст
     pandoc     # .docx -> plain/markdown/latex

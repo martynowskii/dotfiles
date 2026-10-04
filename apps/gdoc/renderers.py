@@ -371,23 +371,19 @@ def render_ppt(src: Path, outdir: Path) -> str:
     return "\n".join(parts)
 
 
-# Это zathura читает сама, и лучше нас: epub она листает как книгу, а не как
-# простыню на двести страниц, а PDF незачем печатать второй раз. Список
-# сверен с плагинами, которые собраны в zathura-with-plugins (pdf-mupdf, djvu,
-# ps, cb); со сторонним --viewer он может и не совпасть.
-#
-# .fb2 mupdf тоже открывает, но почти без оформления, поэтому его мы
-# по-прежнему рисуем сами.
+# Это zathura читает сама, и лучше нас: epub она листает как книгу. Список
+# сверен с плагинами zathura-with-plugins (pdf-mupdf, djvu, ps, cb), так что
+# со сторонним --viewer может и не совпасть. .fb2 mupdf тоже открывает, но
+# почти без оформления, поэтому его мы по-прежнему рисуем сами.
 VIEWER_READS = frozenset({
     ".pdf", ".ps", ".eps", ".epub", ".mobi", ".oxps",
     ".djvu", ".djv", ".cbz", ".cbr", ".cb7", ".cbt",
 })
 
 
-# Сырой typst из markdown пропускать нельзя: pandoc отдаёт блок ```{=typst}
-# компилятору как код, а #read("/etc/passwd") вклеит в PDF любой файл,
-# доступный пользователю. Этот читатель гасит такие блоки на входе,
-# превращая их в обычный текст.
+# Минус raw_attribute обязателен: иначе pandoc отдаёт блок ```{=typst}
+# компилятору как код, и #read("/etc/passwd") вклеит в PDF любой файл,
+# доступный пользователю.
 TYPST_READER = "markdown-raw_attribute"
 
 
@@ -395,17 +391,15 @@ class Format(NamedTuple):
     kind: str                                   # метка в шапке страницы
     render: Callable[[Path, Path], str]         # (исходник, каталог) -> HTML
     wide: bool = False                          # альбомная страница
-    # Свой путь в PDF, мимо страницы и браузера: (исходник, каталог, PDF).
-    # HTML при этом всё равно собирается — он нужен для --html и служит
-    # отметкой готовности записи в кэше.
+    # (исходник, каталог, PDF) мимо страницы и браузера. HTML при этом всё
+    # равно собирается: он нужен для --html и отмечает запись готовой.
     pdf: Callable[[Path, Path, Path], None] | None = None
 
 
 def _typst_cmd(doc: Path, root: Path, pdf: Path) -> list[str]:
     cmd = [TYPST, "compile", "--root", str(root)]
     if TYPST_FONTS:
-        # Иначе результат зависит от шрифтов машины: моноширинный без
-        # кириллицы молча подменяется засечным, и код в тексте не отличить.
+        # Иначе моноширинный без кириллицы молча подменяется засечным.
         cmd += ["--font-path", TYPST_FONTS, "--ignore-system-fonts"]
     return cmd + [str(doc), str(pdf)]
 
